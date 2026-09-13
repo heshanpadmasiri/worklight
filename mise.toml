@@ -1,0 +1,37 @@
+[tools]
+rust = "1.96.0"
+python = "3.14"
+
+[tasks.build]
+description = "Build the release binary"
+run = "cargo build --release"
+
+[tasks.check]
+description = "Formatting and lints"
+run = ["cargo fmt --check", "cargo clippy --all-targets -- -D warnings"]
+
+[tasks.test]
+description = "Fast native correctness tests"
+run = "cargo test"
+
+[tasks."test:e2e"]
+description = "End-to-end tests against the compiled binary"
+depends = ["build"]
+run = "python3 -m unittest discover --start-directory e2e --pattern 'test_*.py' --verbose"
+
+[tasks."test:terminal"]
+description = "PTY and tmux end-to-end tests"
+depends = ["build"]
+run = "python3 -m unittest discover --start-directory e2e --pattern 'terminal_test_*.py' --verbose"
+
+[tasks.install]
+description = "Install the binary into Cargo's installation directory"
+run = "cargo install --path . --force"
+
+[tasks.setup]
+description = "Install and configure the zsh and tmux integrations"
+run = "python3 scripts/setup.py"
+
+[tasks.bench]
+description = "Benchmarks against real isolated SQLite fixtures"
+run = ["cargo build --release", "python3 bench/benchmark.py"]

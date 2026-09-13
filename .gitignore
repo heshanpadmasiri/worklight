@@ -1,0 +1,5 @@
+/.pi/todos
+/target
+/bench/__pycache__
+/e2e/__pycache__
+/scripts/__pycache__

@@ -1,0 +1,962 @@
+{
+  "environment": {
+    "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "cpus": 12,
+    "python": "3.14.7",
+    "sqlite": "3.53.4",
+    "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+    "binary": "/Users/heshanp/Projects/worklight/target/release/worklight",
+    "timestamp": "2026-09-12T18:03:23+0530"
+  },
+  "cases": [
+    {
+      "fixture": {
+        "active": 0,
+        "completed": 0,
+        "bytes": 45056
+      },
+      "plans": {
+        "list_all": {
+          "plan": "SCAN processes USING COVERING INDEX processes_started",
+          "ok": true
+        },
+        "list_active": {
+          "plan": "SCAN processes USING INDEX processes_active",
+          "ok": true
+        }
+      },
+      "measurements": [
+        {
+          "operation": "start",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 4.281,
+          "p95_ms": 5.6,
+          "p99_ms": 6.434,
+          "max_ms": 6.434,
+          "throughput_per_s": 225.4
+        },
+        {
+          "operation": "finish",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 4.961,
+          "p95_ms": 5.745,
+          "p99_ms": 6.613,
+          "max_ms": 6.613,
+          "throughput_per_s": 196.2
+        },
+        {
+          "operation": "get",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 4.817,
+          "p95_ms": 5.645,
+          "p99_ms": 26.186,
+          "max_ms": 26.186,
+          "throughput_per_s": 169.0
+        },
+        {
+          "operation": "list_all",
+          "samples": 3,
+          "failures": 0,
+          "p50_ms": 4.792,
+          "p95_ms": 4.803,
+          "p99_ms": 4.803,
+          "max_ms": 4.803,
+          "throughput_per_s": 212.4
+        },
+        {
+          "operation": "list_active",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 4.605,
+          "p95_ms": 5.347,
+          "p99_ms": 6.142,
+          "max_ms": 6.142,
+          "throughput_per_s": 209.6
+        },
+        {
+          "operation": "concurrent",
+          "samples": 16,
+          "failures": 0,
+          "p50_ms": 16.652,
+          "p95_ms": 22.3,
+          "p99_ms": 30.54,
+          "max_ms": 30.54,
+          "throughput_per_s": 339.8
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "active": 100,
+        "completed": 0,
+        "bytes": 45056
+      },
+      "plans": {
+        "list_all": {
+          "plan": "SCAN processes USING COVERING INDEX processes_started",
+          "ok": true
+        },
+        "list_active": {
+          "plan": "SCAN processes USING INDEX processes_active",
+          "ok": true
+        }
+      },
+      "measurements": [
+        {
+          "operation": "start",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 4.696,
+          "p95_ms": 5.663,
+          "p99_ms": 5.704,
+          "max_ms": 5.704,
+          "throughput_per_s": 209.3
+        },
+        {
+          "operation": "finish",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 4.523,
+          "p95_ms": 5.112,
+          "p99_ms": 5.336,
+          "max_ms": 5.336,
+          "throughput_per_s": 217.2
+        },
+        {
+          "operation": "get",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 4.686,
+          "p95_ms": 5.387,
+          "p99_ms": 5.953,
+          "max_ms": 5.953,
+          "throughput_per_s": 211.5
+        },
+        {
+          "operation": "list_all",
+          "samples": 3,
+          "failures": 0,
+          "p50_ms": 4.315,
+          "p95_ms": 4.357,
+          "p99_ms": 4.357,
+          "max_ms": 4.357,
+          "throughput_per_s": 239.1
+        },
+        {
+          "operation": "list_active",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 3.996,
+          "p95_ms": 4.507,
+          "p99_ms": 5.258,
+          "max_ms": 5.258,
+          "throughput_per_s": 244.2
+        },
+        {
+          "operation": "concurrent",
+          "samples": 16,
+          "failures": 0,
+          "p50_ms": 9.256,
+          "p95_ms": 16.824,
+          "p99_ms": 16.929,
+          "max_ms": 16.929,
+          "throughput_per_s": 547.0
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "active": 1000,
+        "completed": 0,
+        "bytes": 241664
+      },
+      "plans": {
+        "list_all": {
+          "plan": "SCAN processes USING COVERING INDEX processes_started",
+          "ok": true
+        },
+        "list_active": {
+          "plan": "SCAN processes USING INDEX processes_active",
+          "ok": true
+        }
+      },
+      "measurements": [
+        {
+          "operation": "start",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 4.707,
+          "p95_ms": 5.769,
+          "p99_ms": 5.793,
+          "max_ms": 5.793,
+          "throughput_per_s": 212.5
+        },
+        {
+          "operation": "finish",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 4.61,
+          "p95_ms": 5.266,
+          "p99_ms": 5.558,
+          "max_ms": 5.558,
+          "throughput_per_s": 211.9
+        },
+        {
+          "operation": "get",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 4.13,
+          "p95_ms": 5.101,
+          "p99_ms": 6.611,
+          "max_ms": 6.611,
+          "throughput_per_s": 229.4
+        },
+        {
+          "operation": "list_all",
+          "samples": 3,
+          "failures": 0,
+          "p50_ms": 5.6,
+          "p95_ms": 6.261,
+          "p99_ms": 6.261,
+          "max_ms": 6.261,
+          "throughput_per_s": 172.8
+        },
+        {
+          "operation": "list_active",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 6.004,
+          "p95_ms": 9.101,
+          "p99_ms": 9.62,
+          "max_ms": 9.62,
+          "throughput_per_s": 156.5
+        },
+        {
+          "operation": "concurrent",
+          "samples": 16,
+          "failures": 0,
+          "p50_ms": 12.506,
+          "p95_ms": 28.889,
+          "p99_ms": 36.39,
+          "max_ms": 36.39,
+          "throughput_per_s": 335.1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "active": 0,
+        "completed": 10000,
+        "bytes": 1925120
+      },
+      "plans": {
+        "list_all": {
+          "plan": "SCAN processes USING COVERING INDEX processes_started",
+          "ok": true
+        },
+        "list_active": {
+          "plan": "SCAN processes USING INDEX processes_active",
+          "ok": true
+        }
+      },
+      "measurements": [
+        {
+          "operation": "start",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 4.434,
+          "p95_ms": 4.932,
+          "p99_ms": 6.022,
+          "max_ms": 6.022,
+          "throughput_per_s": 217.8
+        },
+        {
+          "operation": "finish",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 5.38,
+          "p95_ms": 6.013,
+          "p99_ms": 6.096,
+          "max_ms": 6.096,
+          "throughput_per_s": 183.2
+        },
+        {
+          "operation": "get",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 5.346,
+          "p95_ms": 5.845,
+          "p99_ms": 6.084,
+          "max_ms": 6.084,
+          "throughput_per_s": 187.3
+        },
+        {
+          "operation": "list_all",
+          "samples": 3,
+          "failures": 0,
+          "p50_ms": 20.315,
+          "p95_ms": 23.666,
+          "p99_ms": 23.666,
+          "max_ms": 23.666,
+          "throughput_per_s": 46.7
+        },
+        {
+          "operation": "list_active",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 4.56,
+          "p95_ms": 5.546,
+          "p99_ms": 7.247,
+          "max_ms": 7.247,
+          "throughput_per_s": 210.3
+        },
+        {
+          "operation": "concurrent",
+          "samples": 16,
+          "failures": 0,
+          "p50_ms": 14.576,
+          "p95_ms": 19.56,
+          "p99_ms": 23.633,
+          "max_ms": 23.633,
+          "throughput_per_s": 418.2
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "active": 100,
+        "completed": 10000,
+        "bytes": 1933312
+      },
+      "plans": {
+        "list_all": {
+          "plan": "SCAN processes USING COVERING INDEX processes_started",
+          "ok": true
+        },
+        "list_active": {
+          "plan": "SCAN processes USING INDEX processes_active",
+          "ok": true
+        }
+      },
+      "measurements": [
+        {
+          "operation": "start",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 5.135,
+          "p95_ms": 5.767,
+          "p99_ms": 6.167,
+          "max_ms": 6.167,
+          "throughput_per_s": 194.6
+        },
+        {
+          "operation": "finish",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 5.417,
+          "p95_ms": 6.381,
+          "p99_ms": 6.621,
+          "max_ms": 6.621,
+          "throughput_per_s": 183.6
+        },
+        {
+          "operation": "get",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 4.635,
+          "p95_ms": 5.461,
+          "p99_ms": 5.505,
+          "max_ms": 5.505,
+          "throughput_per_s": 212.4
+        },
+        {
+          "operation": "list_all",
+          "samples": 3,
+          "failures": 0,
+          "p50_ms": 19.078,
+          "p95_ms": 20.88,
+          "p99_ms": 20.88,
+          "max_ms": 20.88,
+          "throughput_per_s": 51.9
+        },
+        {
+          "operation": "list_active",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 5.394,
+          "p95_ms": 7.605,
+          "p99_ms": 7.688,
+          "max_ms": 7.688,
+          "throughput_per_s": 178.5
+        },
+        {
+          "operation": "concurrent",
+          "samples": 16,
+          "failures": 0,
+          "p50_ms": 46.971,
+          "p95_ms": 64.144,
+          "p99_ms": 94.379,
+          "max_ms": 94.379,
+          "throughput_per_s": 113.6
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "active": 1000,
+        "completed": 10000,
+        "bytes": 2084864
+      },
+      "plans": {
+        "list_all": {
+          "plan": "SCAN processes USING COVERING INDEX processes_started",
+          "ok": true
+        },
+        "list_active": {
+          "plan": "SCAN processes USING INDEX processes_active",
+          "ok": true
+        }
+      },
+      "measurements": [
+        {
+          "operation": "start",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 5.141,
+          "p95_ms": 6.534,
+          "p99_ms": 11.799,
+          "max_ms": 11.799,
+          "throughput_per_s": 177.9
+        },
+        {
+          "operation": "finish",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 5.099,
+          "p95_ms": 6.03,
+          "p99_ms": 7.0,
+          "max_ms": 7.0,
+          "throughput_per_s": 191.6
+        },
+        {
+          "operation": "get",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 4.764,
+          "p95_ms": 5.476,
+          "p99_ms": 6.127,
+          "max_ms": 6.127,
+          "throughput_per_s": 206.0
+        },
+        {
+          "operation": "list_all",
+          "samples": 3,
+          "failures": 0,
+          "p50_ms": 21.206,
+          "p95_ms": 21.217,
+          "p99_ms": 21.217,
+          "max_ms": 21.217,
+          "throughput_per_s": 47.2
+        },
+        {
+          "operation": "list_active",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 5.764,
+          "p95_ms": 7.116,
+          "p99_ms": 7.494,
+          "max_ms": 7.494,
+          "throughput_per_s": 165.9
+        },
+        {
+          "operation": "concurrent",
+          "samples": 16,
+          "failures": 0,
+          "p50_ms": 9.956,
+          "p95_ms": 17.23,
+          "p99_ms": 22.593,
+          "max_ms": 22.593,
+          "throughput_per_s": 455.4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "active": 0,
+        "completed": 100000,
+        "bytes": 20377600
+      },
+      "plans": {
+        "list_all": {
+          "plan": "SCAN processes USING COVERING INDEX processes_started",
+          "ok": true
+        },
+        "list_active": {
+          "plan": "SCAN processes USING INDEX processes_active",
+          "ok": true
+        }
+      },
+      "measurements": [
+        {
+          "operation": "start",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 4.878,
+          "p95_ms": 5.828,
+          "p99_ms": 7.197,
+          "max_ms": 7.197,
+          "throughput_per_s": 195.0
+        },
+        {
+          "operation": "finish",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 5.707,
+          "p95_ms": 6.385,
+          "p99_ms": 7.767,
+          "max_ms": 7.767,
+          "throughput_per_s": 171.7
+        },
+        {
+          "operation": "get",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 5.134,
+          "p95_ms": 5.942,
+          "p99_ms": 6.022,
+          "max_ms": 6.022,
+          "throughput_per_s": 193.4
+        },
+        {
+          "operation": "list_all",
+          "samples": 3,
+          "failures": 0,
+          "p50_ms": 158.383,
+          "p95_ms": 167.658,
+          "p99_ms": 167.658,
+          "max_ms": 167.658,
+          "throughput_per_s": 6.3
+        },
+        {
+          "operation": "list_active",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 3.746,
+          "p95_ms": 4.398,
+          "p99_ms": 5.956,
+          "max_ms": 5.956,
+          "throughput_per_s": 254.2
+        },
+        {
+          "operation": "concurrent",
+          "samples": 16,
+          "failures": 0,
+          "p50_ms": 14.486,
+          "p95_ms": 19.078,
+          "p99_ms": 21.648,
+          "max_ms": 21.648,
+          "throughput_per_s": 420.1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "active": 100,
+        "completed": 100000,
+        "bytes": 20389888
+      },
+      "plans": {
+        "list_all": {
+          "plan": "SCAN processes USING COVERING INDEX processes_started",
+          "ok": true
+        },
+        "list_active": {
+          "plan": "SCAN processes USING INDEX processes_active",
+          "ok": true
+        }
+      },
+      "measurements": [
+        {
+          "operation": "start",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 4.995,
+          "p95_ms": 6.287,
+          "p99_ms": 8.322,
+          "max_ms": 8.322,
+          "throughput_per_s": 189.5
+        },
+        {
+          "operation": "finish",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 5.371,
+          "p95_ms": 6.269,
+          "p99_ms": 7.166,
+          "max_ms": 7.166,
+          "throughput_per_s": 183.5
+        },
+        {
+          "operation": "get",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 4.815,
+          "p95_ms": 5.259,
+          "p99_ms": 5.3,
+          "max_ms": 5.3,
+          "throughput_per_s": 208.2
+        },
+        {
+          "operation": "list_all",
+          "samples": 3,
+          "failures": 0,
+          "p50_ms": 168.146,
+          "p95_ms": 238.35,
+          "p99_ms": 238.35,
+          "max_ms": 238.35,
+          "throughput_per_s": 5.4
+        },
+        {
+          "operation": "list_active",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 4.569,
+          "p95_ms": 5.393,
+          "p99_ms": 6.059,
+          "max_ms": 6.059,
+          "throughput_per_s": 215.4
+        },
+        {
+          "operation": "concurrent",
+          "samples": 16,
+          "failures": 0,
+          "p50_ms": 10.701,
+          "p95_ms": 20.103,
+          "p99_ms": 23.109,
+          "max_ms": 23.109,
+          "throughput_per_s": 450.6
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "active": 1000,
+        "completed": 100000,
+        "bytes": 20557824
+      },
+      "plans": {
+        "list_all": {
+          "plan": "SCAN processes USING COVERING INDEX processes_started",
+          "ok": true
+        },
+        "list_active": {
+          "plan": "SCAN processes USING INDEX processes_active",
+          "ok": true
+        }
+      },
+      "measurements": [
+        {
+          "operation": "start",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 5.048,
+          "p95_ms": 6.463,
+          "p99_ms": 7.937,
+          "max_ms": 7.937,
+          "throughput_per_s": 193.0
+        },
+        {
+          "operation": "finish",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 5.69,
+          "p95_ms": 7.061,
+          "p99_ms": 7.061,
+          "max_ms": 7.061,
+          "throughput_per_s": 171.1
+        },
+        {
+          "operation": "get",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 5.241,
+          "p95_ms": 5.753,
+          "p99_ms": 5.864,
+          "max_ms": 5.864,
+          "throughput_per_s": 188.6
+        },
+        {
+          "operation": "list_all",
+          "samples": 3,
+          "failures": 0,
+          "p50_ms": 163.662,
+          "p95_ms": 175.689,
+          "p99_ms": 175.689,
+          "max_ms": 175.689,
+          "throughput_per_s": 6.1
+        },
+        {
+          "operation": "list_active",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 6.244,
+          "p95_ms": 8.291,
+          "p99_ms": 11.513,
+          "max_ms": 11.513,
+          "throughput_per_s": 148.4
+        },
+        {
+          "operation": "concurrent",
+          "samples": 16,
+          "failures": 0,
+          "p50_ms": 14.214,
+          "p95_ms": 20.96,
+          "p99_ms": 24.446,
+          "max_ms": 24.446,
+          "throughput_per_s": 414.7
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "active": 0,
+        "completed": 1000000,
+        "bytes": 215601152
+      },
+      "plans": {
+        "list_all": {
+          "plan": "SCAN processes USING COVERING INDEX processes_started",
+          "ok": true
+        },
+        "list_active": {
+          "plan": "SCAN processes USING INDEX processes_active",
+          "ok": true
+        }
+      },
+      "measurements": [
+        {
+          "operation": "start",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 5.038,
+          "p95_ms": 5.765,
+          "p99_ms": 8.946,
+          "max_ms": 8.946,
+          "throughput_per_s": 192.9
+        },
+        {
+          "operation": "finish",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 5.438,
+          "p95_ms": 6.098,
+          "p99_ms": 6.468,
+          "max_ms": 6.468,
+          "throughput_per_s": 181.8
+        },
+        {
+          "operation": "get",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 4.282,
+          "p95_ms": 4.822,
+          "p99_ms": 4.94,
+          "max_ms": 4.94,
+          "throughput_per_s": 231.1
+        },
+        {
+          "operation": "list_all",
+          "samples": 3,
+          "failures": 0,
+          "p50_ms": 1546.804,
+          "p95_ms": 1630.398,
+          "p99_ms": 1630.398,
+          "max_ms": 1630.398,
+          "throughput_per_s": 0.6
+        },
+        {
+          "operation": "list_active",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 5.247,
+          "p95_ms": 7.143,
+          "p99_ms": 51.239,
+          "max_ms": 51.239,
+          "throughput_per_s": 131.1
+        },
+        {
+          "operation": "concurrent",
+          "samples": 16,
+          "failures": 0,
+          "p50_ms": 18.046,
+          "p95_ms": 31.006,
+          "p99_ms": 34.677,
+          "max_ms": 34.677,
+          "throughput_per_s": 297.8
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "active": 100,
+        "completed": 1000000,
+        "bytes": 215613440
+      },
+      "plans": {
+        "list_all": {
+          "plan": "SCAN processes USING COVERING INDEX processes_started",
+          "ok": true
+        },
+        "list_active": {
+          "plan": "SCAN processes USING INDEX processes_active",
+          "ok": true
+        }
+      },
+      "measurements": [
+        {
+          "operation": "start",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 5.639,
+          "p95_ms": 6.918,
+          "p99_ms": 9.908,
+          "max_ms": 9.908,
+          "throughput_per_s": 167.2
+        },
+        {
+          "operation": "finish",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 6.388,
+          "p95_ms": 7.347,
+          "p99_ms": 7.733,
+          "max_ms": 7.733,
+          "throughput_per_s": 154.8
+        },
+        {
+          "operation": "get",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 5.852,
+          "p95_ms": 6.346,
+          "p99_ms": 6.76,
+          "max_ms": 6.76,
+          "throughput_per_s": 171.7
+        },
+        {
+          "operation": "list_all",
+          "samples": 3,
+          "failures": 0,
+          "p50_ms": 1554.548,
+          "p95_ms": 1556.669,
+          "p99_ms": 1556.669,
+          "max_ms": 1556.669,
+          "throughput_per_s": 0.6
+        },
+        {
+          "operation": "list_active",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 5.102,
+          "p95_ms": 5.954,
+          "p99_ms": 9.39,
+          "max_ms": 9.39,
+          "throughput_per_s": 185.7
+        },
+        {
+          "operation": "concurrent",
+          "samples": 16,
+          "failures": 0,
+          "p50_ms": 15.537,
+          "p95_ms": 28.65,
+          "p99_ms": 30.281,
+          "max_ms": 30.281,
+          "throughput_per_s": 318.2
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "active": 1000,
+        "completed": 1000000,
+        "bytes": 215781376
+      },
+      "plans": {
+        "list_all": {
+          "plan": "SCAN processes USING COVERING INDEX processes_started",
+          "ok": true
+        },
+        "list_active": {
+          "plan": "SCAN processes USING INDEX processes_active",
+          "ok": true
+        }
+      },
+      "measurements": [
+        {
+          "operation": "start",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 6.358,
+          "p95_ms": 7.036,
+          "p99_ms": 14.156,
+          "max_ms": 14.156,
+          "throughput_per_s": 147.8
+        },
+        {
+          "operation": "finish",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 6.604,
+          "p95_ms": 7.507,
+          "p99_ms": 8.203,
+          "max_ms": 8.203,
+          "throughput_per_s": 152.3
+        },
+        {
+          "operation": "get",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 5.881,
+          "p95_ms": 6.346,
+          "p99_ms": 6.476,
+          "max_ms": 6.476,
+          "throughput_per_s": 172.1
+        },
+        {
+          "operation": "list_all",
+          "samples": 3,
+          "failures": 0,
+          "p50_ms": 1578.536,
+          "p95_ms": 1679.588,
+          "p99_ms": 1679.588,
+          "max_ms": 1679.588,
+          "throughput_per_s": 0.6
+        },
+        {
+          "operation": "list_active",
+          "samples": 20,
+          "failures": 0,
+          "p50_ms": 7.435,
+          "p95_ms": 10.363,
+          "p99_ms": 10.724,
+          "max_ms": 10.724,
+          "throughput_per_s": 129.4
+        },
+        {
+          "operation": "concurrent",
+          "samples": 16,
+          "failures": 0,
+          "p50_ms": 21.712,
+          "p95_ms": 29.861,
+          "p99_ms": 32.58,
+          "max_ms": 32.58,
+          "throughput_per_s": 287.5
+        }
+      ]
+    }
+  ]
+}

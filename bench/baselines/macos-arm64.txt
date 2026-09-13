@@ -1,0 +1,151 @@
+worklight benchmarks
+  platform: macOS-26.5.2-arm64-arm-64bit-Mach-O
+  machine: arm64
+  cpus: 12
+  python: 3.14.7
+  sqlite: 3.53.4
+  rustc: rustc 1.96.0 (ac68faa20 2026-05-25)
+  binary: /Users/heshanp/Projects/worklight/target/release/worklight
+  timestamp: 2026-09-12T18:03:23+0530
+
+active=0 completed=0 (0.0 MB)
+  plan list_all: SCAN processes USING COVERING INDEX processes_started
+  plan list_active: SCAN processes USING INDEX processes_active
+  operation         n  fail       p50       p95       p99       max     ops/s
+  start            20     0      4.28      5.60      6.43      6.43     225.4
+  finish           20     0      4.96      5.75      6.61      6.61     196.2
+  get              20     0      4.82      5.64     26.19     26.19     169.0
+  list_all          3     0      4.79      4.80      4.80      4.80     212.4
+  list_active      20     0      4.61      5.35      6.14      6.14     209.6
+  concurrent       16     0     16.65     22.30     30.54     30.54     339.8
+
+active=100 completed=0 (0.0 MB)
+  plan list_all: SCAN processes USING COVERING INDEX processes_started
+  plan list_active: SCAN processes USING INDEX processes_active
+  operation         n  fail       p50       p95       p99       max     ops/s
+  start            20     0      4.70      5.66      5.70      5.70     209.3
+  finish           20     0      4.52      5.11      5.34      5.34     217.2
+  get              20     0      4.69      5.39      5.95      5.95     211.5
+  list_all          3     0      4.32      4.36      4.36      4.36     239.1
+  list_active      20     0      4.00      4.51      5.26      5.26     244.2
+  concurrent       16     0      9.26     16.82     16.93     16.93     547.0
+
+active=1000 completed=0 (0.2 MB)
+  plan list_all: SCAN processes USING COVERING INDEX processes_started
+  plan list_active: SCAN processes USING INDEX processes_active
+  operation         n  fail       p50       p95       p99       max     ops/s
+  start            20     0      4.71      5.77      5.79      5.79     212.5
+  finish           20     0      4.61      5.27      5.56      5.56     211.9
+  get              20     0      4.13      5.10      6.61      6.61     229.4
+  list_all          3     0      5.60      6.26      6.26      6.26     172.8
+  list_active      20     0      6.00      9.10      9.62      9.62     156.5
+  concurrent       16     0     12.51     28.89     36.39     36.39     335.1
+
+active=0 completed=10000 (1.9 MB)
+  plan list_all: SCAN processes USING COVERING INDEX processes_started
+  plan list_active: SCAN processes USING INDEX processes_active
+  operation         n  fail       p50       p95       p99       max     ops/s
+  start            20     0      4.43      4.93      6.02      6.02     217.8
+  finish           20     0      5.38      6.01      6.10      6.10     183.2
+  get              20     0      5.35      5.84      6.08      6.08     187.3
+  list_all          3     0     20.32     23.67     23.67     23.67      46.7
+  list_active      20     0      4.56      5.55      7.25      7.25     210.3
+  concurrent       16     0     14.58     19.56     23.63     23.63     418.2
+
+active=100 completed=10000 (1.9 MB)
+  plan list_all: SCAN processes USING COVERING INDEX processes_started
+  plan list_active: SCAN processes USING INDEX processes_active
+  operation         n  fail       p50       p95       p99       max     ops/s
+  start            20     0      5.13      5.77      6.17      6.17     194.6
+  finish           20     0      5.42      6.38      6.62      6.62     183.6
+  get              20     0      4.63      5.46      5.50      5.50     212.4
+  list_all          3     0     19.08     20.88     20.88     20.88      51.9
+  list_active      20     0      5.39      7.61      7.69      7.69     178.5
+  concurrent       16     0     46.97     64.14     94.38     94.38     113.6
+
+active=1000 completed=10000 (2.1 MB)
+  plan list_all: SCAN processes USING COVERING INDEX processes_started
+  plan list_active: SCAN processes USING INDEX processes_active
+  operation         n  fail       p50       p95       p99       max     ops/s
+  start            20     0      5.14      6.53     11.80     11.80     177.9
+  finish           20     0      5.10      6.03      7.00      7.00     191.6
+  get              20     0      4.76      5.48      6.13      6.13     206.0
+  list_all          3     0     21.21     21.22     21.22     21.22      47.2
+  list_active      20     0      5.76      7.12      7.49      7.49     165.9
+  concurrent       16     0      9.96     17.23     22.59     22.59     455.4
+
+active=0 completed=100000 (20.4 MB)
+  plan list_all: SCAN processes USING COVERING INDEX processes_started
+  plan list_active: SCAN processes USING INDEX processes_active
+  operation         n  fail       p50       p95       p99       max     ops/s
+  start            20     0      4.88      5.83      7.20      7.20     195.0
+  finish           20     0      5.71      6.38      7.77      7.77     171.7
+  get              20     0      5.13      5.94      6.02      6.02     193.4
+  list_all          3     0    158.38    167.66    167.66    167.66       6.3
+  list_active      20     0      3.75      4.40      5.96      5.96     254.2
+  concurrent       16     0     14.49     19.08     21.65     21.65     420.1
+
+active=100 completed=100000 (20.4 MB)
+  plan list_all: SCAN processes USING COVERING INDEX processes_started
+  plan list_active: SCAN processes USING INDEX processes_active
+  operation         n  fail       p50       p95       p99       max     ops/s
+  start            20     0      5.00      6.29      8.32      8.32     189.5
+  finish           20     0      5.37      6.27      7.17      7.17     183.5
+  get              20     0      4.82      5.26      5.30      5.30     208.2
+  list_all          3     0    168.15    238.35    238.35    238.35       5.4
+  list_active      20     0      4.57      5.39      6.06      6.06     215.4
+  concurrent       16     0     10.70     20.10     23.11     23.11     450.6
+
+active=1000 completed=100000 (20.6 MB)
+  plan list_all: SCAN processes USING COVERING INDEX processes_started
+  plan list_active: SCAN processes USING INDEX processes_active
+  operation         n  fail       p50       p95       p99       max     ops/s
+  start            20     0      5.05      6.46      7.94      7.94     193.0
+  finish           20     0      5.69      7.06      7.06      7.06     171.1
+  get              20     0      5.24      5.75      5.86      5.86     188.6
+  list_all          3     0    163.66    175.69    175.69    175.69       6.1
+  list_active      20     0      6.24      8.29     11.51     11.51     148.4
+  concurrent       16     0     14.21     20.96     24.45     24.45     414.7
+
+active=0 completed=1000000 (215.6 MB)
+  plan list_all: SCAN processes USING COVERING INDEX processes_started
+  plan list_active: SCAN processes USING INDEX processes_active
+  operation         n  fail       p50       p95       p99       max     ops/s
+  start            20     0      5.04      5.76      8.95      8.95     192.9
+  finish           20     0      5.44      6.10      6.47      6.47     181.8
+  get              20     0      4.28      4.82      4.94      4.94     231.1
+  list_all          3     0   1546.80   1630.40   1630.40   1630.40       0.6
+  list_active      20     0      5.25      7.14     51.24     51.24     131.1
+  concurrent       16     0     18.05     31.01     34.68     34.68     297.8
+
+active=100 completed=1000000 (215.6 MB)
+  plan list_all: SCAN processes USING COVERING INDEX processes_started
+  plan list_active: SCAN processes USING INDEX processes_active
+  operation         n  fail       p50       p95       p99       max     ops/s
+  start            20     0      5.64      6.92      9.91      9.91     167.2
+  finish           20     0      6.39      7.35      7.73      7.73     154.8
+  get              20     0      5.85      6.35      6.76      6.76     171.7
+  list_all          3     0   1554.55   1556.67   1556.67   1556.67       0.6
+  list_active      20     0      5.10      5.95      9.39      9.39     185.7
+  concurrent       16     0     15.54     28.65     30.28     30.28     318.2
+
+active=1000 completed=1000000 (215.8 MB)
+  plan list_all: SCAN processes USING COVERING INDEX processes_started
+  plan list_active: SCAN processes USING INDEX processes_active
+  operation         n  fail       p50       p95       p99       max     ops/s
+  start            20     0      6.36      7.04     14.16     14.16     147.8
+  finish           20     0      6.60      7.51      8.20      8.20     152.3
+  get              20     0      5.88      6.35      6.48      6.48     172.1
+  list_all          3     0   1578.54   1679.59   1679.59   1679.59       0.6
+  list_active      20     0      7.43     10.36     10.72     10.72     129.4
+  concurrent       16     0     21.71     29.86     32.58     32.58     287.5
+
+degradation across completed history (p50 ms)
+  operation              0       10000      100000     1000000
+  start               4.70        5.13        5.00        5.64
+  finish              4.61        5.38        5.69        6.39
+  get                 4.69        4.76        5.13        5.85
+  list_active         4.61        5.39        4.57        5.25
+  list_all            4.79       20.32      163.66     1554.55
+
+wrote bench/baselines/macos-arm64.json
