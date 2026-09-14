@@ -15,9 +15,12 @@ import time
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+CHECKOUT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(CHECKOUT / "scripts"))
+sys.path.insert(0, str(CHECKOUT / "e2e"))
 
 from harness import WorklightTestCase  # noqa: E402
+from setup import tmux_integration  # noqa: E402
 from terminal import PtySession  # noqa: E402
 
 ID, STATE, EXIT, ELAPSED, ACK, KIND, CWD, LABEL = range(8)
@@ -63,8 +66,8 @@ class TmuxTestCase(WorklightTestCase):
     def server_pid(self) -> str:
         return self.tmux("display-message", "-p", "-F", "#{pid}")
 
-    def attach(self, target: str = "main") -> str:
-        """Attach a real client and return its name."""
+    def attach_session(self, target: str = "main") -> tuple[str, PtySession]:
+        """Attach a real client and return its name and PTY."""
         existing = set(
             self.tmux("list-clients", "-F", "#{client_name}", check=False).splitlines()
         )
@@ -81,9 +84,14 @@ class TmuxTestCase(WorklightTestCase):
             )
             added = clients - existing
             if added:
-                return added.pop()
+                return added.pop(), session
             time.sleep(0.1)
         self.fail(f"no tmux client attached\n{session.detail()}")
+
+    def attach(self, target: str = "main") -> str:
+        """Attach a real client and return its name."""
+        client, _ = self.attach_session(target)
+        return client
 
     # --- runs inside panes ----------------------------------------------
 
@@ -268,6 +276,34 @@ class FocusTests(TmuxTestCase):
 
         self.assertIn("no longer available", result.err)
         self.assertEqual(self.ok("get", run_id).rows[0][ACK], "no")
+
+    def test_generated_popup_navigates_the_initiating_client(self) -> None:
+        target = self.panes()[0]
+        label = "cargo popup-navigation"
+        self.start_in_pane(target, label)
+        self.tmux("new-session", "-d", "-s", "panel")
+
+        # Use the generated binding with a wrapper that supplies this test's
+        # isolated database, then drive the real popup through its client PTY.
+        wrapper = self.root / "worklight test's wrapper"
+        wrapper.write_text(
+            "#!/bin/sh\nexec "
+            f"{shlex.quote(str(self.binary))} --database {shlex.quote(str(self.db))} \"$@\"\n"
+        )
+        wrapper.chmod(0o755)
+        integration = self.root / "integration.tmux"
+        integration.write_text(tmux_integration(wrapper))
+        self.tmux("source-file", str(integration))
+
+        client, terminal = self.attach_session("panel")
+        terminal.send("\x02 ")
+        self.assertTrue(terminal.wait_for(label), terminal.detail())
+        terminal.send("\r")
+
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and self.client_details(client)[1] != target:
+            time.sleep(0.1)
+        self.assertEqual(self.client_details(client)[1], target, terminal.detail())
 
     def test_panel_enter_navigates_then_acknowledges_a_completed_run(self) -> None:
         target = self.panes()[0]

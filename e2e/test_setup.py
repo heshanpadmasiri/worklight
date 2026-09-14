@@ -233,6 +233,7 @@ class InstallationTests(SetupTestCase):
         # initiating client.
         integration = (self.config / "integrations.tmux").read_text()
         self.assertIn(str(self.binary), integration)
+        self.assertIn("run-shell -C", integration)
         self.assertIn("#{q:client_name}", integration)
         zsh_integration = (self.config / "integrations.zsh").read_text()
         self.assertIn("_worklight_hook_preexec", zsh_integration)
