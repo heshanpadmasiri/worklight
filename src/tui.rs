@@ -21,7 +21,7 @@ use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
 use ratatui::{Frame, Terminal};
 
 use crate::error::Error;
-use crate::process::{ProcessRun, ProcessSnapshot, ProcessState};
+use crate::process::{ProcessRun, ProcessSnapshot};
 use crate::storage::Storage;
 
 const REFRESH: Duration = Duration::from_secs(5);
@@ -93,7 +93,6 @@ enum PanelRequest {
     MoveSelection(isize),
     Resize(usize),
     ToggleHistory,
-    Acknowledge(i64),
     Focus { id: i64, args: Vec<String> },
     Shutdown,
 }
@@ -180,7 +179,6 @@ fn worker(
                         Ok(false)
                     }
                     PanelRequest::ToggleHistory => data.toggle_history().map(|()| false),
-                    PanelRequest::Acknowledge(id) => data.acknowledge(id).map(|()| false),
                     PanelRequest::Focus { id, args } => data.focus(id, &args),
                     PanelRequest::Shutdown => unreachable!(),
                 };
@@ -367,21 +365,6 @@ impl PanelData {
         self.normalize_selection();
     }
 
-    fn acknowledge(&mut self, id: i64) -> Result<(), Error> {
-        let process = self.processes.get_mut(&id).ok_or(Error::NotFound(id))?;
-        if self.dry_run {
-            if matches!(process.state()?, ProcessState::Running) {
-                return Err(Error::StillRunning(id));
-            }
-            self.message = Some(format!("dry run: would acknowledge process {id}"));
-        } else {
-            process.acknowledge()?;
-            self.message = None;
-        }
-        self.normalize_selection();
-        Ok(())
-    }
-
     fn focus(&mut self, id: i64, args: &[String]) -> Result<bool, Error> {
         let process = self.processes.get_mut(&id).ok_or(Error::NotFound(id))?;
         if self.dry_run {
@@ -550,7 +533,6 @@ fn event_loop(
                     KeyCode::Char('h') => {
                         send_request(requests, PanelRequest::ToggleHistory)?;
                     }
-                    KeyCode::Char('a') => acknowledge(&panel, requests)?,
                     KeyCode::Enter => navigate(&panel, requests)?,
                     _ => {}
                 },
@@ -602,13 +584,6 @@ fn send_request(requests: &Sender<PanelRequest>, request: PanelRequest) -> Resul
 fn viewport_rows(height: u16) -> usize {
     // Two footer rows, two table borders, and one table header.
     usize::from(height.saturating_sub(5))
-}
-
-fn acknowledge(panel: &Panel, requests: &Sender<PanelRequest>) -> Result<(), Error> {
-    if let Some(id) = panel.selected() {
-        send_request(requests, PanelRequest::Acknowledge(id))?;
-    }
-    Ok(())
 }
 
 fn navigate(panel: &Panel, requests: &Sender<PanelRequest>) -> Result<(), Error> {
@@ -738,7 +713,7 @@ fn draw(frame: &mut Frame, panel: &mut Panel) {
     };
     frame.render_widget(status, areas[1]);
     frame.render_widget(
-        Paragraph::new("j/k or arrows select  enter navigate  a acknowledge  h history  q quit"),
+        Paragraph::new("j/k or arrows select  enter navigate  h history  q quit"),
         areas[2],
     );
 }

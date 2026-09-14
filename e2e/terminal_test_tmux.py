@@ -134,10 +134,31 @@ class TmuxTestCase(WorklightTestCase):
     def client_session(self, client: str) -> str:
         return self.client_details(client)[0]
 
+    def focus_env(self) -> dict[str, str]:
+        return {
+            "TMUX": f"{self.socket},{self.server_pid()},0",
+            "TMUX_PANE": self.active_pane(),
+        }
+
     def session_pane(self, session: str) -> str:
         return self.tmux(
             "display-message", "-t", session, "-p", "-F", "#{pane_id}"
         )
+
+    def open_panel_for_client(self, client: str, label: str) -> str:
+        panel_pane = self.session_pane("panel")
+        command = (
+            f"WORKLIGHT_TMUX_CLIENT={shlex.quote(client)} "
+            f"{shlex.quote(str(self.binary))} --database {shlex.quote(str(self.db))} panel"
+        )
+        self.tmux("send-keys", "-t", panel_pane, command, "Enter")
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            screen = self.tmux("capture-pane", "-p", "-t", panel_pane, check=False)
+            if label in screen:
+                return panel_pane
+            time.sleep(0.1)
+        self.fail(f"panel did not display {label!r}; last screen:\n{screen}")
 
 
 class CaptureTests(TmuxTestCase):
@@ -149,20 +170,22 @@ class CaptureTests(TmuxTestCase):
         row = self.ok("get", run_id).rows[0]
         self.assertEqual(row[KIND], "tmux")
         stored = subprocess.run(
-            ["sqlite3", str(self.db), "SELECT pane_id, server_instance FROM tmux"],
+            ["sqlite3", str(self.db), "SELECT pane FROM tmux"],
             capture_output=True,
             text=True,
         )
         if stored.returncode == 0:
-            self.assertIn(pane, stored.stdout)
-            self.assertIn(self.server_pid(), stored.stdout)
+            self.assertEqual(stored.stdout.strip(), pane)
 
     def test_concurrent_capture_from_several_panes(self) -> None:
         self.tmux("split-window", "-t", "main")
         self.tmux("split-window", "-t", "main")
         panes = self.panes()
 
-        ids = [self.start_in_pane(pane, f"job-{index}") for index, pane in enumerate(panes)]
+        ids = [
+            self.start_in_pane(pane, f"cargo job-{index}")
+            for index, pane in enumerate(panes)
+        ]
 
         self.assertEqual(len(set(ids)), len(panes))
         self.assertEqual(len(self.ok("list").rows), len(panes))
@@ -191,7 +214,7 @@ class FocusTests(TmuxTestCase):
         self.assertEqual(self.client_session(observer), "holding")
         self.assertEqual(self.client_session(client), "waiting")
 
-        self.ok("focus", run_id, "--client", client)
+        self.ok("focus", run_id, "--client", client, env=self.focus_env())
 
         self.assertEqual(self.client_session(client), "main")
         self.assertEqual(self.session_pane("main"), target)
@@ -203,16 +226,16 @@ class FocusTests(TmuxTestCase):
         run_id = self.start_in_pane(pane, "cargo test")
         self.finish_in_pane(pane, run_id, "0")
 
-        self.ok("focus", run_id, "--client", client)
+        self.ok("focus", run_id, "--client", client, env=self.focus_env())
 
         self.assertEqual(self.ok("get", run_id).rows[0][ACK], "yes")
 
     def test_navigating_to_a_running_run_acknowledges_nothing(self) -> None:
         client = self.attach()
         pane = self.panes()[0]
-        run_id = self.start_in_pane(pane, "sleep 100")
+        run_id = self.start_in_pane(pane, "cargo run -- sleep 100")
 
-        self.ok("focus", run_id, "--client", client)
+        self.ok("focus", run_id, "--client", client, env=self.focus_env())
 
         self.assertEqual(self.ok("get", run_id).rows[0][ACK], "no")
 
@@ -225,7 +248,9 @@ class FocusTests(TmuxTestCase):
         self.tmux("rename-window", "-t", "main", "renamed")
         self.tmux("rename-session", "-t", "main", "elsewhere")
 
-        result = self.ok("focus", run_id, "--client", client)
+        result = self.ok(
+            "focus", run_id, "--client", client, env=self.focus_env()
+        )
 
         self.assertIn("elsewhere", result.line)
 
@@ -237,28 +262,86 @@ class FocusTests(TmuxTestCase):
         self.finish_in_pane(doomed, run_id, "0")
         self.tmux("kill-pane", "-t", doomed)
 
-        result = self.fails("focus", run_id, "--client", client)
+        result = self.fails(
+            "focus", run_id, "--client", client, env=self.focus_env()
+        )
 
         self.assertIn("no longer available", result.err)
         self.assertEqual(self.ok("get", run_id).rows[0][ACK], "no")
 
-    def test_a_restarted_server_is_distinguished_from_a_reused_pane(self) -> None:
+    def test_panel_enter_navigates_then_acknowledges_a_completed_run(self) -> None:
+        target = self.panes()[0]
+        run_id = self.start_in_pane(target, "cargo panel-completed")
+        self.finish_in_pane(target, run_id, "0")
+        cwd = self.ok("get", run_id).rows[0][CWD]
+        self.tmux("new-session", "-d", "-s", "panel")
+        client = self.attach("panel")
+        panel_pane = self.open_panel_for_client(client, "cargo panel-completed")
+        screen = self.tmux("capture-pane", "-p", "-t", panel_pane)
+        self.assertIn(cwd, screen)
+
+        self.tmux("send-keys", "-t", panel_pane, "Enter")
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and self.client_details(client)[1] != target:
+            time.sleep(0.1)
+        self.assertEqual(self.client_details(client)[1], target)
+        self.assertEqual(self.ok("get", run_id).rows[0][ACK], "yes")
+
+        # Persisted acknowledgment survives reopening and keeps the row out of
+        # the normal view.
+        self.tmux("switch-client", "-c", client, "-t", "panel")
+        self.open_panel_for_client(client, "worklight")
+        reopened = self.tmux("capture-pane", "-p", "-t", panel_pane)
+        self.assertNotIn("cargo panel-completed", reopened)
+        self.assertEqual(self.ok("get", run_id).rows[0][ACK], "yes")
+        self.tmux("send-keys", "-t", panel_pane, "q")
+
+    def test_panel_enter_navigates_to_running_run_without_acknowledging(self) -> None:
+        target = self.panes()[0]
+        run_id = self.start_in_pane(target, "cargo panel-running")
+        self.tmux("new-session", "-d", "-s", "panel")
+        client = self.attach("panel")
+        panel_pane = self.open_panel_for_client(client, "cargo panel-running")
+
+        self.tmux("send-keys", "-t", panel_pane, "Enter")
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and self.client_details(client)[1] != target:
+            time.sleep(0.1)
+        self.assertEqual(self.client_details(client)[1], target)
+        self.assertEqual(self.ok("get", run_id).rows[0][ACK], "no")
+
+    def test_failed_panel_navigation_neither_moves_nor_acknowledges(self) -> None:
+        self.tmux("split-window", "-t", "main")
+        doomed = self.panes()[1]
+        run_id = self.start_in_pane(doomed, "cargo panel-missing")
+        self.finish_in_pane(doomed, run_id, "0")
+        self.tmux("kill-pane", "-t", doomed)
+        self.tmux("new-session", "-d", "-s", "panel")
+        client = self.attach("panel")
+        panel_pane = self.open_panel_for_client(client, "cargo panel-missing")
+
+        self.tmux("send-keys", "-t", panel_pane, "Enter")
+        time.sleep(1)
+        self.assertEqual(self.client_details(client)[1], panel_pane)
+        self.assertEqual(self.ok("get", run_id).rows[0][ACK], "no")
+        screen = self.tmux("capture-pane", "-p", "-t", panel_pane)
+        self.assertIn("no longer available", screen)
+        self.tmux("send-keys", "-t", panel_pane, "q")
+
+    def test_focus_uses_the_recorded_pane_in_the_current_tmux_server(self) -> None:
         pane = self.panes()[0]
         run_id = self.start_in_pane(pane, "cargo test")
         self.finish_in_pane(pane, run_id, "0")
-        old_pid = self.server_pid()
 
         self.kill_server()
         self.new_server()
         client = self.attach()
-        # The socket path and even the pane id can come back; the server
-        # instance is what tells the difference.
-        self.assertNotEqual(self.server_pid(), old_pid)
+        current_pane = self.panes()[0]
 
-        result = self.fails("focus", run_id, "--client", client)
+        self.ok("focus", run_id, "--client", client, env=self.focus_env())
 
-        self.assertIn("restarted", result.err)
-        self.assertEqual(self.ok("get", run_id).rows[0][ACK], "no")
+        self.assertEqual(self.client_details(client)[1], current_pane)
+        self.assertEqual(self.ok("get", run_id).rows[0][ACK], "yes")
 
 
 if __name__ == "__main__":

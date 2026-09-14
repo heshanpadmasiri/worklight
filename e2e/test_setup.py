@@ -8,6 +8,7 @@ configuration, tmux configuration and installed binaries are never touched.
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -178,6 +179,23 @@ class ConfigurationTests(SetupTestCase):
         self.assertIn(str(zdotdir / ".zshrc"), result.stdout)
         self.assertNotIn(f"{self.home}/.zshrc", result.stdout)
 
+    def test_generated_hooks_quote_an_absolute_binary_path(self) -> None:
+        cargo_home = self.root / "cargo home with 'quote"
+
+        result = self.setup("--dry-run", env={"CARGO_HOME": str(cargo_home)})
+
+        self.assertEqual(result.returncode, 0, self.detail(result))
+        self.assertIn(shlex.quote(str(cargo_home / "bin" / "worklight")), result.stdout)
+        self.assertIn("_worklight_hook_preexec", result.stdout)
+        self.assertIn("_worklight_hook_precmd", result.stdout)
+
+    def test_relative_cargo_home_generates_an_absolute_hook_path(self) -> None:
+        result = self.setup("--dry-run", env={"CARGO_HOME": "relative-cargo"})
+
+        self.assertEqual(result.returncode, 0, self.detail(result))
+        expected = (CHECKOUT / "relative-cargo" / "bin" / "worklight").resolve()
+        self.assertIn(str(expected), result.stdout)
+
     def test_custom_paths_are_honored(self) -> None:
         custom_zshrc = self.root / "custom.zshrc"
         custom_tmux = self.root / "custom.tmux.conf"
@@ -216,8 +234,11 @@ class InstallationTests(SetupTestCase):
         integration = (self.config / "integrations.tmux").read_text()
         self.assertIn(str(self.binary), integration)
         self.assertIn("#{q:client_name}", integration)
-        # No tracking hooks are installed.
-        self.assertNotIn("preexec", (self.config / "integrations.zsh").read_text())
+        zsh_integration = (self.config / "integrations.zsh").read_text()
+        self.assertIn("_worklight_hook_preexec", zsh_integration)
+        self.assertIn("_worklight_hook_precmd", zsh_integration)
+        self.assertIn("typeset -g _worklight_hook_pending_id", zsh_integration)
+        self.assertIn(shlex.quote(str(self.binary)), zsh_integration)
 
     def test_rerunning_changes_nothing_and_writes_no_backup(self) -> None:
         self.assertEqual(self.setup("-y").returncode, 0)

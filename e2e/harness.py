@@ -8,6 +8,7 @@ server are never touched.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -94,4 +95,9 @@ class WorklightTestCase(unittest.TestCase):
         return result
 
     def start(self, label: str, env: dict[str, str] | None = None) -> str:
-        return self.ok("start", label, env=env).line
+        result = self.ok("start", label, env=env)
+        match = re.fullmatch(r"([0-9]+)\n", result.out, flags=re.ASCII)
+        self.assertIsNotNone(match, f"expected one positive process ID line\n{result}")
+        process_id = match.group(1)
+        self.assertGreater(int(process_id), 0, f"expected a positive process ID\n{result}")
+        return process_id

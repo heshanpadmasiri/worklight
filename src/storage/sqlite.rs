@@ -213,7 +213,8 @@ impl Database {
         ensure_initialized(connection, &self.path)?;
         let mut result = Vec::with_capacity(ids.len());
         for chunk in ids.chunks(STATE_CHUNK) {
-            let placeholders = std::iter::repeat_n("?", chunk.len())
+            let placeholders = std::iter::repeat("?")
+                .take(chunk.len())
                 .collect::<Vec<_>>()
                 .join(",");
             let sql = format!("SELECT id,running,finished,acked,finished_at,exit_status FROM processes WHERE id IN ({placeholders})");

@@ -53,7 +53,7 @@ class Fixture:
         if self.path.exists():
             self.path.unlink()
         # Let the binary create the schema, so the fixture cannot drift.
-        seed = run(env, "--database", str(self.path), "start", "schema seed").strip()
+        seed = run(env, "--database", str(self.path), "start", "cargo schema seed").strip()
         run(env, "--database", str(self.path), "finish", seed, "0")
         conn = sqlite3.connect(self.path)
         conn.execute("DELETE FROM processes")
@@ -69,52 +69,69 @@ class Fixture:
         rows = []
         shells = []
         panes = []
+        next_shell = conn.execute("SELECT coalesce(max(id), 0) FROM shells").fetchone()[0]
+        next_tmux = conn.execute("SELECT coalesce(max(id), 0) FROM tmux").fetchone()[0]
         base = 1_600_000_000_000
         for index in range(count):
-            key = f"{kind}{index}"
             # Timestamps vary, and every fourth run is recorded in tmux.
             started = base + index * 997
             if index % 4 == 0:
-                panes.append((key, "/work", "/tmp/tmux-bench", str(4000 + index % 7), f"%{index}"))
-                shell_id, tmux_id = None, key
+                next_tmux += 1
+                panes.append((next_tmux, "/work", f"%{index}"))
+                shell, tmux, orchestrator_id = 0, 1, next_tmux
             else:
-                shells.append((key, f"/work/{index % 32}"))
-                shell_id, tmux_id = key, None
+                next_shell += 1
+                shells.append((next_shell, f"/work/{index % 32}"))
+                shell, tmux, orchestrator_id = 1, 0, next_shell
             if finished:
                 # Mixed success and failure, and only some acknowledged.
-                exit_code = 0 if index % 3 else (1 if index % 2 else 130)
+                exit_status = 0 if index % 3 else (1 if index % 2 else 130)
+                acked = 1 if index % 5 == 0 else 0
                 rows.append(
                     (
-                        key,
-                        f"job {index}",
+                        f"{kind} job {index}",
                         started,
+                        0,
+                        0 if acked else 1,
+                        acked,
                         started + 5_000,
-                        exit_code,
-                        1 if index % 5 == 0 else 0,
-                        shell_id,
-                        tmux_id,
+                        exit_status,
+                        shell,
+                        tmux,
+                        orchestrator_id,
                     )
                 )
             else:
-                rows.append((key, f"job {index}", started, None, None, 0, shell_id, tmux_id))
+                rows.append(
+                    (
+                        f"{kind} job {index}",
+                        started,
+                        1,
+                        0,
+                        0,
+                        None,
+                        None,
+                        shell,
+                        tmux,
+                        orchestrator_id,
+                    )
+                )
         conn.executemany("INSERT INTO shells (id, cwd) VALUES (?, ?)", shells)
+        conn.executemany("INSERT INTO tmux (id, cwd, pane) VALUES (?, ?, ?)", panes)
         conn.executemany(
-            "INSERT INTO tmux (id, cwd, socket, server_instance, pane_id) VALUES (?, ?, ?, ?, ?)",
-            panes,
-        )
-        conn.executemany(
-            "INSERT INTO processes (id, label, started_at, finished_at, exit_code,"
-            " acknowledged, shell_id, tmux_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO processes (label, started_at, running, finished, acked,"
+            " finished_at, exit_status, shell, tmux, orchestrator_id)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
 
     def validate(self) -> dict[str, int]:
         conn = sqlite3.connect(self.path)
         active = conn.execute(
-            "SELECT count(*) FROM processes WHERE exit_code IS NULL"
+            "SELECT count(*) FROM processes WHERE running = 1"
         ).fetchone()[0]
         completed = conn.execute(
-            "SELECT count(*) FROM processes WHERE exit_code IS NOT NULL"
+            "SELECT count(*) FROM processes WHERE running = 0"
         ).fetchone()[0]
         conn.close()
         if active != self.active or completed != self.completed:
@@ -140,7 +157,7 @@ class Fixture:
             ("list_all", "SELECT id FROM processes ORDER BY started_at DESC, id DESC"),
             (
                 "list_active",
-                "SELECT id FROM processes WHERE exit_code IS NULL"
+                "SELECT id FROM processes WHERE running = 1"
                 " ORDER BY started_at DESC, id DESC",
             ),
         ):
@@ -155,7 +172,7 @@ class Fixture:
             return True
         # The partial index holds only the running records, so the active list
         # must not fall back to reading the completed ones.
-        return "processes_active" in plan
+        return "processes_running" in plan
 
     def ids(self, count: int) -> list[str]:
         conn = sqlite3.connect(self.path)
@@ -167,7 +184,7 @@ class Fixture:
         if not rows:
             return []
         random.seed(17)
-        return [random.choice(rows) for _ in range(count)]
+        return [str(random.choice(rows)) for _ in range(count)]
 
 
 # --- measurement ---------------------------------------------------------
@@ -235,7 +252,7 @@ def measure_fixture(fixture: Fixture, env: dict[str, str], iterations: int) -> l
     started_ids: list[str] = []
     for _ in range(iterations):
         holder: list[str] = []
-        timed(starts, lambda: holder.append(run(env, "--database", db, "start", "bench").strip()))
+        timed(starts, lambda: holder.append(run(env, "--database", db, "start", "cargo bench").strip()))
         started_ids.extend(holder)
     results.append(starts.summary())
 
@@ -283,7 +300,7 @@ def measure_concurrency(fixture: Fixture, env: dict[str, str], iterations: int) 
         for _ in range(per_worker):
             start = time.perf_counter()
             try:
-                run_id = run(env, "--database", db, "start", "concurrent").strip()
+                run_id = run(env, "--database", db, "start", "cargo concurrent").strip()
                 run(env, "--database", db, "finish", run_id, "0")
             except RuntimeError:
                 measurement.failures += 1

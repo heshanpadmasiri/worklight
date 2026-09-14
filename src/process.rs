@@ -60,6 +60,7 @@ impl ProcessRun {
     pub(crate) fn id(&self) -> i64 {
         self.id
     }
+    #[allow(dead_code)]
     pub(crate) fn label(&self) -> &str {
         &self.label
     }
@@ -75,12 +76,14 @@ impl ProcessRun {
         }
         Ok(self.state)
     }
+    #[allow(dead_code)]
     pub(crate) fn finished_at(&mut self) -> Result<Option<SystemTime>, Error> {
         if matches!(self.state, ProcessState::Running) {
             self.sync()?;
         }
         Ok(completion(self.state).map(|(time, _)| time))
     }
+    #[allow(dead_code)]
     pub(crate) fn exit_status(&mut self) -> Result<Option<u8>, Error> {
         if matches!(self.state, ProcessState::Running) {
             self.sync()?;

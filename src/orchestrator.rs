@@ -6,12 +6,14 @@ use std::process::Command;
 use crate::error::Error;
 use crate::storage::Storage;
 
+#[allow(dead_code)]
 pub(crate) struct Shell {
     id: i64,
     cwd: PathBuf,
     storage: Storage,
 }
 
+#[allow(dead_code)]
 pub(crate) struct Tmux {
     id: i64,
     cwd: PathBuf,
@@ -49,6 +51,7 @@ impl Orchestrator {
         }))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn id(&self) -> i64 {
         match self {
             Self::Shell(value) => value.id,
@@ -90,6 +93,7 @@ impl Orchestrator {
             },
         }
     }
+    #[allow(dead_code)]
     pub(crate) fn belongs_to(&self, storage: &Storage) -> bool {
         match self {
             Self::Shell(value) => value.storage.same_storage(storage),
