@@ -1,6 +1,6 @@
 use std::sync::{Arc, Barrier};
 
-use rusqlite::Connection;
+use rusqlite::{params, Connection};
 
 use crate::error::Error;
 use crate::process::ProcessState;
@@ -86,8 +86,11 @@ fn schema_has_new_lifecycle_and_partial_indexes() {
     assert_eq!(
         indexes,
         vec![
+            "processes_collectible",
             "processes_running",
+            "processes_shell_orchestrator",
             "processes_started",
+            "processes_tmux_orchestrator",
             "processes_unacked"
         ]
     );
@@ -120,6 +123,145 @@ fn deleting_tracked_entities_removes_their_orchestrators() {
         )
         .unwrap();
     assert_eq!(orchestrators, 0);
+}
+
+#[test]
+fn stale_collection_uses_thresholds_and_preserves_nonterminal_rows() {
+    let fixture = Fixture::new();
+    fixture.storage().start_process("still running").unwrap();
+    let mut connection = Connection::open(fixture.path()).unwrap();
+    let transaction = connection.transaction().unwrap();
+    for (id, cwd) in [
+        (10, "/old-process"),
+        (11, "/new-process"),
+        (12, "/old-agent"),
+        (13, "/new-agent"),
+        (14, "/protected"),
+    ] {
+        transaction
+            .execute("INSERT INTO shells(id,cwd) VALUES(?1,?2)", params![id, cwd])
+            .unwrap();
+    }
+    for index in 0..1_000_i64 {
+        let orchestrator = if index < 500 { 10 } else { 11 };
+        transaction.execute(
+            "INSERT INTO processes(label,started_at,running,finished,acked,finished_at,exit_status,shell,tmux,orchestrator_id)
+             VALUES('old process',?1,0,0,1,?1,0,1,0,?2)",
+            params![index, orchestrator],
+        ).unwrap();
+        let orchestrator = if index < 500 { 12 } else { 13 };
+        transaction
+            .execute(
+                "INSERT INTO agents(kind,started_at,status,acked,shell,tmux,orchestrator_id)
+             VALUES('pi',?1,5,0,1,0,?2)",
+                params![index, orchestrator],
+            )
+            .unwrap();
+    }
+    transaction.execute(
+        "INSERT INTO processes(label,started_at,running,finished,acked,finished_at,exit_status,shell,tmux,orchestrator_id)
+         VALUES('unacknowledged',0,0,1,0,1,0,1,0,14)",
+        [],
+    ).unwrap();
+    transaction
+        .execute(
+            "INSERT INTO agents(kind,started_at,status,acked,shell,tmux,orchestrator_id)
+         VALUES('pi',0,4,1,1,0,14)",
+            [],
+        )
+        .unwrap();
+    transaction.commit().unwrap();
+    drop(connection);
+
+    Storage::collect_stale(fixture.path()).unwrap();
+    let connection = Connection::open(fixture.path()).unwrap();
+    assert_eq!(count_where(&connection, "processes", "acked=1"), 1_000);
+    assert_eq!(count_where(&connection, "agents", "status=5"), 1_000);
+    drop(connection);
+
+    let connection = Connection::open(fixture.path()).unwrap();
+    connection.execute(
+        "INSERT INTO processes(label,started_at,running,finished,acked,finished_at,exit_status,shell,tmux,orchestrator_id)
+         VALUES('new process',1000,0,0,1,1000,0,1,0,11)",
+        [],
+    ).unwrap();
+    connection
+        .execute(
+            "INSERT INTO agents(kind,started_at,status,acked,shell,tmux,orchestrator_id)
+         VALUES('pi',1000,5,0,1,0,13)",
+            [],
+        )
+        .unwrap();
+    drop(connection);
+
+    Storage::collect_stale(fixture.path()).unwrap();
+    let connection = Connection::open(fixture.path()).unwrap();
+    assert_eq!(count_where(&connection, "processes", "acked=1"), 501);
+    assert_eq!(count_where(&connection, "agents", "status=5"), 501);
+    assert_eq!(count_where(&connection, "processes", "finished=1"), 1);
+    assert_eq!(
+        count_where(&connection, "agents", "status=4 AND acked=1"),
+        1
+    );
+    assert_eq!(count_where(&connection, "processes", "running=1"), 1);
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT min(finished_at) FROM processes WHERE acked=1",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+        500
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT min(started_at) FROM agents WHERE status=5",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+        500
+    );
+    assert_eq!(count_where(&connection, "shells", "id IN (10,12)"), 0);
+    assert_eq!(count_where(&connection, "shells", "id IN (11,13,14)"), 3);
+}
+
+#[test]
+fn stale_collection_skips_a_busy_database_and_missing_database() {
+    let fixture = Fixture::new();
+    fixture.storage().start_process("initialize").unwrap();
+    let mut blocker = Connection::open(fixture.path()).unwrap();
+    blocker
+        .execute_batch(
+            "WITH RECURSIVE sequence(value) AS (
+                SELECT 1 UNION ALL SELECT value+1 FROM sequence WHERE value<1001
+             )
+             INSERT INTO processes(label,started_at,running,finished,acked,finished_at,exit_status,shell,tmux,orchestrator_id)
+             SELECT 'collectible',value,0,0,1,value,0,1,0,1 FROM sequence;",
+        )
+        .unwrap();
+    let transaction = blocker.transaction().unwrap();
+    transaction
+        .execute("INSERT INTO shells(cwd) VALUES('/lock')", [])
+        .unwrap();
+    Storage::collect_stale(fixture.path()).unwrap();
+    transaction.rollback().unwrap();
+
+    let missing = fixture.path().with_file_name("missing.db");
+    Storage::collect_stale(&missing).unwrap();
+    assert!(!missing.exists());
+}
+
+fn count_where(connection: &Connection, table: &str, predicate: &str) -> i64 {
+    connection
+        .query_row(
+            &format!("SELECT count(*) FROM {table} WHERE {predicate}"),
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
 }
 
 #[test]
@@ -216,14 +358,14 @@ fn concurrent_finish_has_one_winner() {
 }
 
 #[test]
-fn fresh_schema_is_version_three_with_agent_indexes() {
+fn fresh_schema_is_version_four_with_agent_indexes() {
     let fixture = Fixture::new();
     fixture.storage().start_process("schema").unwrap();
     let connection = Connection::open(fixture.path()).unwrap();
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 3);
+    assert_eq!(version, 4);
     let indexes: Vec<String> = connection
         .prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='agents' AND sql IS NOT NULL ORDER BY name")
         .unwrap()
@@ -233,7 +375,14 @@ fn fresh_schema_is_version_three_with_agent_indexes() {
         .collect();
     assert_eq!(
         indexes,
-        vec!["agents_active", "agents_started", "agents_unkilled"]
+        vec![
+            "agents_active",
+            "agents_collectible",
+            "agents_shell_orchestrator",
+            "agents_started",
+            "agents_tmux_orchestrator",
+            "agents_unkilled"
+        ]
     );
 }
 
@@ -252,6 +401,44 @@ fn writable_version_two_migrates_without_rewriting_existing_values() {
         3
     );
     assert_eq!(version_two_values(fixture.path()), before);
+}
+
+#[test]
+fn background_collection_adds_indexes_to_an_over_threshold_version_three_database() {
+    let fixture = Fixture::new();
+    create_version_three(fixture.path());
+    Connection::open(fixture.path())
+        .unwrap()
+        .execute_batch(
+            "WITH RECURSIVE sequence(value) AS (
+                SELECT 1 UNION ALL SELECT value+1 FROM sequence WHERE value<1001
+             )
+             INSERT INTO processes(label,started_at,running,finished,acked,finished_at,exit_status,shell,tmux,orchestrator_id)
+             SELECT 'collectible',value,0,0,1,value,0,1,0,7 FROM sequence;",
+        )
+        .unwrap();
+
+    Storage::collect_stale(fixture.path()).unwrap();
+
+    let connection = Connection::open(fixture.path()).unwrap();
+    assert_eq!(
+        connection
+            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+            .unwrap(),
+        4
+    );
+    assert_eq!(count_where(&connection, "processes", "id=9"), 1);
+    assert_eq!(
+        count_where(
+            &connection,
+            "sqlite_master",
+            "type='index' AND name IN (
+                'processes_collectible','processes_shell_orchestrator','processes_tmux_orchestrator',
+                'agents_collectible','agents_shell_orchestrator','agents_tmux_orchestrator'
+            )"
+        ),
+        6
+    );
 }
 
 #[test]
@@ -349,8 +536,35 @@ fn read_only_version_two_requires_migration_and_modifies_nothing() {
 }
 
 #[test]
+fn ordinary_and_read_only_version_three_access_does_not_add_collection_indexes() {
+    let fixture = Fixture::new();
+    create_version_three(fixture.path());
+    let before = version_two_values(fixture.path());
+
+    Storage::open(fixture.path()).unwrap();
+    Storage::open_read_only(fixture.path()).unwrap();
+
+    let connection = Connection::open(fixture.path()).unwrap();
+    assert_eq!(version_two_values(fixture.path()), before);
+    assert_eq!(
+        connection
+            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+            .unwrap(),
+        3
+    );
+    assert_eq!(
+        count_where(
+            &connection,
+            "sqlite_master",
+            "type='index' AND name IN ('processes_collectible','agents_collectible')"
+        ),
+        0
+    );
+}
+
+#[test]
 fn version_one_and_unknown_versions_remain_incompatible() {
-    for version in [1, 4, 99] {
+    for version in [1, 5, 99] {
         let fixture = Fixture::new();
         let connection = Connection::open(fixture.path()).unwrap();
         connection
@@ -387,6 +601,33 @@ fn incompatible_database_is_not_replaced() {
             .unwrap(),
         1
     );
+}
+
+fn create_version_three(path: &std::path::Path) {
+    create_version_two(path);
+    Connection::open(path)
+        .unwrap()
+        .execute_batch(
+            r#"
+CREATE TABLE agents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL CHECK (length(trim(kind)) > 0),
+    started_at INTEGER NOT NULL,
+    status INTEGER NOT NULL CHECK (status BETWEEN 1 AND 5),
+    acked INTEGER NOT NULL DEFAULT 0 CHECK (acked IN (0, 1)),
+    shell INTEGER NOT NULL CHECK (shell IN (0, 1)),
+    tmux INTEGER NOT NULL CHECK (tmux IN (0, 1)),
+    orchestrator_id INTEGER NOT NULL,
+    CHECK (shell + tmux = 1),
+    CHECK (acked = 0 OR status = 4)
+);
+CREATE INDEX agents_started ON agents(started_at DESC, id DESC);
+CREATE INDEX agents_unkilled ON agents(started_at DESC, id DESC) WHERE status != 5;
+CREATE INDEX agents_active ON agents(started_at DESC, id DESC) WHERE acked = 0 AND status != 5;
+PRAGMA user_version=3;
+"#,
+        )
+        .unwrap();
 }
 
 fn create_version_two(path: &std::path::Path) {

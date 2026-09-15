@@ -25,6 +25,9 @@ impl Storage {
             database: Rc::new(sqlite::Database::open(path, true)?),
         })
     }
+    pub(crate) fn collect_stale(path: &Path) -> Result<(), Error> {
+        sqlite::Database::collect_stale(path)
+    }
     pub(crate) fn start_process(&self, label: &str) -> Result<ProcessRun, Error> {
         ProcessRun::create(self.clone(), label)
     }

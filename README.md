@@ -86,6 +86,14 @@ synchronizes persisted state every five seconds. Arrows or `j`/`k` select,
 `Enter` navigates, `h` toggles acknowledged process history, and `q` or `Esc`
 quits.
 
+After its initial data load, each writable panel session starts one best-effort database
+maintenance pass on a background thread. Maintenance never runs in ordinary CLI
+commands or dry-run panels. If more than 1,000 acknowledged processes or killed
+agents have accumulated, it removes at most the oldest 500 of each and deletes
+orphaned navigation records. Lock contention causes the pass to skip; SQLite
+reuses the freed pages, so maintenance does not run `VACUUM`. Running and
+unacknowledged processes and resumable `done` agents are never collected.
+
 Agents and processes are displayed in separate tables. Both show command,
 state, elapsed time, and working directory; processes additionally show exit
 status. Their box titles make a type column unnecessary. Actionable agents are
@@ -134,7 +142,8 @@ are not stored in Pi session files or reused.
 Tracking is best effort: a Worklight command failure never fails a Pi lifecycle
 event. Shutdown waits at most 12 seconds for queued updates and cleanup. A
 crash, forced termination, command failure, or timeout can therefore leave a
-stale agent; Worklight performs no heartbeat, PID polling, or stale-row cleanup.
+stale active agent; Worklight performs no heartbeat or PID polling and cannot
+automatically identify abandoned active rows.
 
 ## Claude Code integration
 
@@ -169,8 +178,9 @@ session start.
 Tracking is best effort: the hook always exits zero, never writes to standard
 output, and records failures in `hook.log` beside the state files. A status that
 fails to report is retried by the next event that wants it. A crash, forced
-termination, or command failure can leave a stale agent; Worklight performs no
-heartbeat, PID polling, or stale-row cleanup.
+termination, or command failure can leave a stale active agent; Worklight
+performs no heartbeat or PID polling and cannot automatically identify
+abandoned active rows.
 
 ## Codex integration
 
@@ -259,11 +269,16 @@ into an existing server is opt-in with `--reload-tmux`.
 
 ## Database migration
 
-Current databases use schema version 3. Opening a writable version-2 database
-migrates it transactionally by adding agent storage and indexes; existing
-process, shell, and tmux rows are not rewritten. A failed migration rolls back
-and leaves version 2 intact. Read-only and dry-run access to a version-2
-database reports that a writable migration is required and makes no change.
+New databases use schema version 4. To keep ordinary commands out of the
+maintenance path, they continue to read and write version-3 databases without
+building collection indexes. When a background panel pass finds more than the
+collection threshold, it upgrades version 3 by adding those indexes
+transactionally before deleting rows. Opening a writable version-2 database
+first adds agent storage and its existing indexes;
+existing process, shell, and tmux rows are not rewritten. A failed migration
+rolls back and leaves the prior version intact. Read-only and dry-run access to
+a version-2 database reports that a writable migration is required; version 3
+remains readable without change.
 Older, unknown, and nonempty versionless schemas remain incompatible.
 
 ## Development

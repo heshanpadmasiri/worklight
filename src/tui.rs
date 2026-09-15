@@ -199,6 +199,7 @@ fn worker(
     if events.send(PanelEvent::Updated(data.snapshot())).is_err() {
         return Ok(());
     }
+    drop(start_background_maintenance(&path, dry_run));
 
     let mut next_refresh = Instant::now() + REFRESH;
     let mut next_history = Instant::now();
@@ -307,6 +308,16 @@ fn worker(
             next_history = now + HISTORY_STEP;
         }
     }
+}
+
+fn start_background_maintenance(path: &Path, dry_run: bool) -> Option<std::thread::JoinHandle<()>> {
+    if dry_run {
+        return None;
+    }
+    let path = path.to_path_buf();
+    Some(std::thread::spawn(move || {
+        let _ = Storage::collect_stale(&path);
+    }))
 }
 
 impl PanelData {
@@ -1168,6 +1179,19 @@ mod tests {
         panel.sync().unwrap();
         assert!(panel.snapshot().rows.is_empty());
         assert!(!panel.agents.get(&agent.id()).unwrap().needs_sync());
+    }
+
+    #[test]
+    fn background_maintenance_is_disabled_for_dry_run_and_does_not_create_a_database() {
+        let fixture = Fixture::new();
+        assert!(start_background_maintenance(&fixture.path, true).is_none());
+        assert!(!fixture.path.exists());
+
+        start_background_maintenance(&fixture.path, false)
+            .unwrap()
+            .join()
+            .unwrap();
+        assert!(!fixture.path.exists());
     }
 
     #[test]

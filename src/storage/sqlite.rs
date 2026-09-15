@@ -10,9 +10,11 @@ use crate::orchestrator::Orchestrator;
 use crate::process::{from_millis, to_millis, ProcessRun, ProcessState};
 use crate::storage::Storage;
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 const BUSY_TIMEOUT_MS: u64 = 5_000;
 const STATE_CHUNK: usize = 900;
+const GC_THRESHOLD: i64 = 1_000;
+const GC_BATCH: i64 = 500;
 const SCHEMA: &str = r#"
 CREATE TABLE shells (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -59,6 +61,12 @@ CREATE TABLE agents (
 CREATE INDEX agents_started ON agents(started_at DESC, id DESC);
 CREATE INDEX agents_unkilled ON agents(started_at DESC, id DESC) WHERE status != 5;
 CREATE INDEX agents_active ON agents(started_at DESC, id DESC) WHERE acked = 0 AND status != 5;
+CREATE INDEX processes_collectible ON processes(finished_at, id) WHERE acked = 1;
+CREATE INDEX processes_shell_orchestrator ON processes(orchestrator_id) WHERE shell = 1;
+CREATE INDEX processes_tmux_orchestrator ON processes(orchestrator_id) WHERE tmux = 1;
+CREATE INDEX agents_collectible ON agents(started_at, id) WHERE status = 5;
+CREATE INDEX agents_shell_orchestrator ON agents(orchestrator_id) WHERE shell = 1;
+CREATE INDEX agents_tmux_orchestrator ON agents(orchestrator_id) WHERE tmux = 1;
 "#;
 const AGENT_SCHEMA: &str = r#"
 CREATE TABLE agents (
@@ -76,6 +84,14 @@ CREATE TABLE agents (
 CREATE INDEX agents_started ON agents(started_at DESC, id DESC);
 CREATE INDEX agents_unkilled ON agents(started_at DESC, id DESC) WHERE status != 5;
 CREATE INDEX agents_active ON agents(started_at DESC, id DESC) WHERE acked = 0 AND status != 5;
+"#;
+const GC_INDEX_SCHEMA: &str = r#"
+CREATE INDEX processes_collectible ON processes(finished_at, id) WHERE acked = 1;
+CREATE INDEX processes_shell_orchestrator ON processes(orchestrator_id) WHERE shell = 1;
+CREATE INDEX processes_tmux_orchestrator ON processes(orchestrator_id) WHERE tmux = 1;
+CREATE INDEX agents_collectible ON agents(started_at, id) WHERE status = 5;
+CREATE INDEX agents_shell_orchestrator ON agents(orchestrator_id) WHERE shell = 1;
+CREATE INDEX agents_tmux_orchestrator ON agents(orchestrator_id) WHERE tmux = 1;
 "#;
 const SELECT_PROCESS: &str = "
  p.id,p.label,p.started_at,p.running,p.finished,p.acked,p.finished_at,p.exit_status,
@@ -607,6 +623,151 @@ impl Database {
     pub(super) fn delete_agent(&self, id: i64) -> Result<(), Error> {
         self.with_writable(|connection| delete_tracked(connection, "agents", id))
     }
+
+    pub(super) fn collect_stale(path: &Path) -> Result<(), Error> {
+        if !path.exists() {
+            return Ok(());
+        }
+        let mut connection = open_existing(path, false)?;
+        connection.busy_timeout(Duration::ZERO).map_err(map_error)?;
+        match prepare_and_collect_stale(&mut connection, path) {
+            Err(Error::Busy(_)) => Ok(()),
+            result => result,
+        }
+    }
+}
+
+fn prepare_and_collect_stale(connection: &mut Connection, path: &Path) -> Result<(), Error> {
+    check_schema(connection, path)?;
+    if schema_version(connection)? == 3 {
+        let (excess_processes, excess_agents) = collection_thresholds(connection)?;
+        if !excess_processes && !excess_agents {
+            return Ok(());
+        }
+        migrate_collection_indexes(connection)?;
+    }
+    collect_stale_once(connection)
+}
+
+fn collect_stale_once(connection: &mut Connection) -> Result<(), Error> {
+    let (excess_processes, excess_agents) = collection_thresholds(connection)?;
+    if !excess_processes && !excess_agents {
+        return Ok(());
+    }
+
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_error)?;
+    // Another panel may have collected the rows after our read-only probe.
+    let (excess_processes, excess_agents) = collection_thresholds(&transaction)?;
+    if !excess_processes && !excess_agents {
+        return transaction.commit().map_err(map_error);
+    }
+
+    transaction
+        .execute_batch(
+            "CREATE TEMP TABLE gc_orchestrators (
+                shell INTEGER NOT NULL,
+                id INTEGER NOT NULL,
+                PRIMARY KEY(shell,id)
+            ) WITHOUT ROWID;",
+        )
+        .map_err(map_error)?;
+
+    if excess_processes {
+        transaction
+            .execute(
+                "INSERT OR IGNORE INTO gc_orchestrators(shell,id)
+                 SELECT shell,orchestrator_id FROM processes WHERE id IN (
+                    SELECT id FROM processes WHERE acked=1
+                    ORDER BY finished_at,id LIMIT ?1
+                 )",
+                [GC_BATCH],
+            )
+            .map_err(map_error)?;
+        transaction
+            .execute(
+                "DELETE FROM processes WHERE id IN (
+                    SELECT id FROM processes WHERE acked=1
+                    ORDER BY finished_at,id LIMIT ?1
+                )",
+                [GC_BATCH],
+            )
+            .map_err(map_error)?;
+    }
+
+    if excess_agents {
+        transaction
+            .execute(
+                "INSERT OR IGNORE INTO gc_orchestrators(shell,id)
+                 SELECT shell,orchestrator_id FROM agents WHERE id IN (
+                    SELECT id FROM agents WHERE status=5
+                    ORDER BY started_at,id LIMIT ?1
+                 )",
+                [GC_BATCH],
+            )
+            .map_err(map_error)?;
+        transaction
+            .execute(
+                "DELETE FROM agents WHERE id IN (
+                    SELECT id FROM agents WHERE status=5
+                    ORDER BY started_at,id LIMIT ?1
+                )",
+                [GC_BATCH],
+            )
+            .map_err(map_error)?;
+    }
+
+    transaction
+        .execute(
+            "DELETE FROM shells
+             WHERE id IN (SELECT id FROM gc_orchestrators WHERE shell=1)
+               AND NOT EXISTS (
+                   SELECT 1 FROM processes
+                   WHERE shell=1 AND orchestrator_id=shells.id
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM agents
+                   WHERE shell=1 AND orchestrator_id=shells.id
+               )",
+            [],
+        )
+        .map_err(map_error)?;
+    transaction
+        .execute(
+            "DELETE FROM tmux
+             WHERE id IN (SELECT id FROM gc_orchestrators WHERE shell=0)
+               AND NOT EXISTS (
+                   SELECT 1 FROM processes
+                   WHERE tmux=1 AND orchestrator_id=tmux.id
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM agents
+                   WHERE tmux=1 AND orchestrator_id=tmux.id
+               )",
+            [],
+        )
+        .map_err(map_error)?;
+
+    transaction.commit().map_err(map_error)
+}
+
+fn collection_thresholds(connection: &Connection) -> Result<(bool, bool), Error> {
+    let excess_processes = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM processes WHERE acked=1 LIMIT 1 OFFSET ?1)",
+            [GC_THRESHOLD],
+            |row| row.get(0),
+        )
+        .map_err(map_error)?;
+    let excess_agents = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM agents WHERE status=5 LIMIT 1 OFFSET ?1)",
+            [GC_THRESHOLD],
+            |row| row.get(0),
+        )
+        .map_err(map_error)?;
+    Ok((excess_processes, excess_agents))
 }
 
 fn delete_tracked(connection: &mut Connection, table: &str, id: i64) -> Result<(), Error> {
@@ -890,14 +1051,29 @@ fn migrate_or_check_schema(connection: &mut Connection, path: &Path) -> Result<(
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(map_error)?;
     match schema_version(&transaction)? {
-        SCHEMA_VERSION => {}
+        3 | SCHEMA_VERSION => {}
         2 => {
             transaction.execute_batch(AGENT_SCHEMA).map_err(map_error)?;
             transaction
-                .pragma_update(None, "user_version", SCHEMA_VERSION)
+                .pragma_update(None, "user_version", 3)
                 .map_err(map_error)?;
         }
         _ => check_schema(&transaction, path)?,
+    }
+    transaction.commit().map_err(map_error)
+}
+
+fn migrate_collection_indexes(connection: &mut Connection) -> Result<(), Error> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_error)?;
+    if schema_version(&transaction)? == 3 {
+        transaction
+            .execute_batch(GC_INDEX_SCHEMA)
+            .map_err(map_error)?;
+        transaction
+            .pragma_update(None, "user_version", SCHEMA_VERSION)
+            .map_err(map_error)?;
     }
     transaction.commit().map_err(map_error)
 }
@@ -921,7 +1097,7 @@ fn ensure_initialized(connection: &Connection, path: &Path) -> Result<(), Error>
 }
 fn check_schema(connection: &Connection, path: &Path) -> Result<(), Error> {
     let version = schema_version(connection)?;
-    if version == SCHEMA_VERSION {
+    if matches!(version, 3 | SCHEMA_VERSION) {
         return Ok(());
     }
     if version == 0 {
@@ -936,7 +1112,7 @@ fn check_schema(connection: &Connection, path: &Path) -> Result<(), Error> {
     }
     if version == 2 {
         return Err(Error::Incompatible(format!(
-            "{} has schema version 2 and requires migration to version {SCHEMA_VERSION}",
+            "{} has schema version 2 and requires a writable migration",
             path.display()
         )));
     }
