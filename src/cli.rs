@@ -71,10 +71,11 @@ pub(crate) fn should_track(command: &str) -> bool {
     let invocation = &command[command_start..];
     if !TRACKED_COMMANDS.iter().any(|tracked| {
         invocation.strip_prefix(tracked).is_some_and(|remainder| {
-            remainder
-                .as_bytes()
-                .first()
-                .is_none_or(|byte| byte.is_ascii_whitespace() || b";|&<>()".contains(byte))
+            remainder.is_empty()
+                || remainder
+                    .as_bytes()
+                    .first()
+                    .is_some_and(|byte| byte.is_ascii_whitespace() || b";|&<>()".contains(byte))
         })
     }) {
         return false;
