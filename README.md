@@ -83,8 +83,10 @@ Within fields, backslash, tab, carriage return, and newline are escaped as
 
 Run `worklight panel`, or simply `worklight`, to open the Ratatui panel. It
 synchronizes persisted state every five seconds. Arrows or `j`/`k` select,
-`Enter` navigates, `h` toggles acknowledged process history, and `q` or `Esc`
-quits.
+`Enter` navigates, `a` acknowledges a completed process or `done` agent, `h`
+toggles acknowledged process history, and `q` or `Esc` quits. Acknowledging a
+running process, a non-`done` agent, or an already acknowledged process is a
+no-op.
 
 After its initial data load, each writable panel session starts one best-effort database
 maintenance pass on a background thread. Maintenance never runs in ordinary CLI
@@ -103,13 +105,13 @@ Acknowledged `done` agents and `killed` agents
 are hidden. Hidden acknowledged agents remain synchronized and reappear after
 normal synchronization if the same runtime starts working again.
 
-Opening or refreshing the panel acknowledges nothing. Successful navigation
-to a completed process acknowledges it. Successful navigation to an agent
-conditionally acknowledges it only if its current stored status is still
-`done`; failed navigation never acknowledges and opens a confirmation popup
-that can delete the stale agent or process from the database. The `h` history
-view is process-only and does nothing to agent state. Administrative
-acknowledgment remains available through the process and agent CLI commands.
+Opening or refreshing the panel acknowledges nothing. Pressing `a` directly
+acknowledges the selected completed process or conditionally acknowledges the
+selected agent only if its current stored status is still `done`. Successful
+navigation has the same acknowledgment behavior. Failed navigation never
+acknowledges and opens a confirmation popup that can delete the stale agent or
+process from the database. The `h` history view is process-only and does
+nothing to agent state.
 
 ## Where work started
 

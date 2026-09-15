@@ -22,7 +22,7 @@ use ratatui::{Frame, Terminal};
 
 use crate::agent::{AgentRun, AgentSnapshot, AgentStatus};
 use crate::error::Error;
-use crate::process::{ProcessRun, ProcessSnapshot};
+use crate::process::{ProcessRun, ProcessSnapshot, ProcessState};
 use crate::storage::Storage;
 
 const REFRESH: Duration = Duration::from_secs(5);
@@ -138,6 +138,7 @@ enum PanelRequest {
     MoveSelection(isize),
     Resize(usize),
     ToggleHistory,
+    AcknowledgeSelection,
     Focus {
         target: TrackedId,
         args: Vec<String>,
@@ -230,6 +231,13 @@ fn worker(
                         (Ok(false), None)
                     }
                     PanelRequest::ToggleHistory => (data.toggle_history().map(|()| false), None),
+                    PanelRequest::AcknowledgeSelection => {
+                        let result = match data.selected {
+                            Some(target) => data.acknowledge(target),
+                            None => Ok(()),
+                        };
+                        (result.map(|()| false), None)
+                    }
                     PanelRequest::Focus { target, args } => {
                         (data.focus(target, &args), Some(target))
                     }
@@ -518,6 +526,29 @@ impl PanelData {
         Ok(true)
     }
 
+    fn acknowledge(&mut self, target: TrackedId) -> Result<(), Error> {
+        if self.dry_run {
+            return Ok(());
+        }
+
+        match target {
+            TrackedId::Agent(id) => self
+                .agents
+                .get_mut(&id)
+                .ok_or(Error::AgentNotFound(id))?
+                .acknowledge_if_done()?,
+            TrackedId::Process(id) => {
+                let process = self.processes.get_mut(&id).ok_or(Error::NotFound(id))?;
+                if matches!(process.state()?, ProcessState::Finished { .. }) {
+                    process.acknowledge()?;
+                }
+            }
+        }
+        self.message = None;
+        self.normalize_selection();
+        Ok(())
+    }
+
     fn delete(&mut self, target: TrackedId) -> Result<(), Error> {
         if self.dry_run {
             return Err(Error::ReadOnly);
@@ -749,6 +780,7 @@ fn event_loop(
                             KeyCode::Char('h') => {
                                 send_request(requests, PanelRequest::ToggleHistory)?;
                             }
+                            KeyCode::Char('a') => acknowledge(&panel, requests)?,
                             KeyCode::Enter => navigate(&panel, requests)?,
                             _ => {}
                         }
@@ -813,6 +845,13 @@ fn send_request(requests: &Sender<PanelRequest>, request: PanelRequest) -> Resul
 fn viewport_rows(height: u16) -> usize {
     // Two footer rows, plus borders and a header for each of the two tables.
     usize::from(height.saturating_sub(8))
+}
+
+fn acknowledge(panel: &Panel, requests: &Sender<PanelRequest>) -> Result<(), Error> {
+    if panel.selected().is_none() {
+        return Ok(());
+    }
+    send_request(requests, PanelRequest::AcknowledgeSelection)
 }
 
 fn navigate(panel: &Panel, requests: &Sender<PanelRequest>) -> Result<(), Error> {
@@ -963,7 +1002,7 @@ fn draw(frame: &mut Frame, panel: &mut Panel) {
     };
     frame.render_widget(status, areas[1]);
     frame.render_widget(
-        Paragraph::new("j/k or arrows select  enter navigate  h history  q quit"),
+        Paragraph::new("j/k or arrows select  enter navigate  a acknowledge  h history  q quit"),
         areas[2],
     );
 
@@ -1237,6 +1276,150 @@ mod tests {
     }
 
     #[test]
+    fn acknowledge_requests_use_the_worker_selection_and_empty_selection_is_a_no_op() {
+        let (sender, receiver) = mpsc::channel();
+        let mut panel = Panel::empty();
+        acknowledge(&panel, &sender).unwrap();
+        assert!(receiver.try_recv().is_err());
+
+        panel.snapshot.selected = Some(TrackedId::Process(1));
+        acknowledge(&panel, &sender).unwrap();
+        assert!(matches!(
+            receiver.try_recv().unwrap(),
+            PanelRequest::AcknowledgeSelection
+        ));
+    }
+
+    #[test]
+    fn queued_movement_is_applied_before_acknowledging_the_worker_selection() {
+        let fixture = Fixture::new();
+        let writer = fixture.storage();
+        let mut first = writer
+            .create_process("first", Path::new("/first"), None)
+            .unwrap();
+        first.finish(0).unwrap();
+        let mut second = writer
+            .create_process("second", Path::new("/second"), None)
+            .unwrap();
+        second.finish(0).unwrap();
+        let (request_sender, request_receiver) = mpsc::channel();
+        let (event_sender, _event_receiver) = mpsc::channel();
+        let path = fixture.path.clone();
+        let handle = std::thread::spawn(move || {
+            worker(path, false, request_receiver, event_sender).unwrap();
+        });
+
+        request_sender.send(PanelRequest::MoveSelection(1)).unwrap();
+        request_sender
+            .send(PanelRequest::AcknowledgeSelection)
+            .unwrap();
+        request_sender.send(PanelRequest::Shutdown).unwrap();
+        handle.join().unwrap();
+
+        assert!(writer
+            .get_process(first.id())
+            .unwrap()
+            .snapshot()
+            .acknowledged());
+        assert!(!writer
+            .get_process(second.id())
+            .unwrap()
+            .snapshot()
+            .acknowledged());
+    }
+
+    #[test]
+    fn acknowledging_completed_entities_hides_them_and_advances_selection() {
+        let fixture = Fixture::new();
+        let writer = fixture.storage();
+        let mut first = writer
+            .create_process("first", Path::new("/first"), None)
+            .unwrap();
+        first.finish(0).unwrap();
+        let mut second = writer
+            .create_process("second", Path::new("/second"), None)
+            .unwrap();
+        second.finish(1).unwrap();
+        let mut done = writer
+            .create_agent("pi", Path::new("/agent"), None)
+            .unwrap();
+        done.set_status(AgentStatus::Working).unwrap();
+        done.set_status(AgentStatus::Done).unwrap();
+
+        let mut panel = PanelData::load(fixture.storage(), false).unwrap();
+        panel.resize(20);
+        panel.selected = Some(TrackedId::Process(second.id()));
+        panel.acknowledge(TrackedId::Process(second.id())).unwrap();
+        assert_ne!(panel.selected, Some(TrackedId::Process(second.id())));
+        assert!(panel.selected.is_some());
+        assert!(writer
+            .get_process(second.id())
+            .unwrap()
+            .snapshot()
+            .acknowledged());
+
+        panel.acknowledge(TrackedId::Agent(done.id())).unwrap();
+        assert!(writer.get_agent(done.id()).unwrap().snapshot().acknowledged);
+        assert!(!row_ids(&panel.snapshot()).contains(&TrackedId::Agent(done.id())));
+    }
+
+    #[test]
+    fn acknowledging_non_completed_or_already_acknowledged_entities_is_a_no_op() {
+        let fixture = Fixture::new();
+        let writer = fixture.storage();
+        let running = writer
+            .create_process("running", Path::new("/running"), None)
+            .unwrap();
+        let idle = writer
+            .create_agent("pi", Path::new("/agent"), None)
+            .unwrap();
+        let mut finished = writer
+            .create_process("finished", Path::new("/finished"), None)
+            .unwrap();
+        finished.finish(0).unwrap();
+
+        let mut panel = PanelData::load(fixture.storage(), false).unwrap();
+        panel.resize(20);
+        panel.acknowledge(TrackedId::Process(running.id())).unwrap();
+        panel.acknowledge(TrackedId::Agent(idle.id())).unwrap();
+        assert!(!writer
+            .get_process(running.id())
+            .unwrap()
+            .snapshot()
+            .acknowledged());
+        assert!(!writer.get_agent(idle.id()).unwrap().snapshot().acknowledged);
+
+        panel
+            .acknowledge(TrackedId::Process(finished.id()))
+            .unwrap();
+        panel.toggle_history().unwrap();
+        panel
+            .acknowledge(TrackedId::Process(finished.id()))
+            .unwrap();
+        assert!(row_ids(&panel.snapshot()).contains(&TrackedId::Process(finished.id())));
+    }
+
+    #[test]
+    fn dry_run_acknowledgment_does_not_mutate_storage() {
+        let fixture = Fixture::new();
+        let writer = fixture.storage();
+        let mut process = writer
+            .create_process("process", Path::new("/process"), None)
+            .unwrap();
+        process.finish(0).unwrap();
+        let mut panel =
+            PanelData::load(Storage::open_read_only(&fixture.path).unwrap(), true).unwrap();
+
+        panel.acknowledge(TrackedId::Process(process.id())).unwrap();
+
+        assert!(!writer
+            .get_process(process.id())
+            .unwrap()
+            .snapshot()
+            .acknowledged());
+    }
+
+    #[test]
     fn overlapping_ids_cannot_misroute_worker_actions() {
         let fixture = Fixture::new();
         let writer = fixture.storage();
@@ -1290,6 +1473,7 @@ mod tests {
         assert!(rows[1].contains("command"));
         assert!(!rows[1].contains("exit"));
         assert!(rows[5].contains("exit"));
+        assert!(rows.iter().any(|row| row.contains("a acknowledge")));
     }
 
     #[test]

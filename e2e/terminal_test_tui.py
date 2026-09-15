@@ -91,26 +91,24 @@ class RefreshTests(PanelTestCase):
 
 
 class SelectionTests(PanelTestCase):
-    def test_selection_moves_and_a_has_no_effect(self) -> None:
+    def test_selection_moves_and_a_acknowledges_the_selected_run(self) -> None:
         first = self.start("cargo first")
         self.ok("process", "finish", first, "0")
         second = self.start("cargo second")
         self.ok("process", "finish", second, "1")
         session = self.panel()
         self.assertTrue(session.wait_for("first"), session.detail())
-        self.assertNotIn("a acknowledge", session.screen())
+        self.assertIn("acknowledge", session.screen())
 
-        # The newest run is selected first; move down to the older one.
-        session.send("j")
-        session.read(0.5)
-        session.send("a")
+        # The newest run is selected first; move down and immediately ack.
+        session.send("ja")
         session.read(1.0)
         self.quit(session)
 
-        self.assertEqual(self.ok("process", "get", first).rows[0][4], "no")
+        self.assertEqual(self.ok("process", "get", first).rows[0][4], "yes")
         self.assertEqual(self.ok("process", "get", second).rows[0][4], "no")
 
-    def test_arrow_keys_select_without_acknowledging(self) -> None:
+    def test_arrow_keys_choose_the_run_to_acknowledge(self) -> None:
         first = self.start("cargo first")
         self.ok("process", "finish", first, "0")
         second = self.start("cargo second")
@@ -127,10 +125,9 @@ class SelectionTests(PanelTestCase):
         self.quit(session)
 
         self.assertEqual(self.ok("process", "get", first).rows[0][4], "no")
-        self.assertEqual(self.ok("process", "get", second).rows[0][4], "no")
+        self.assertEqual(self.ok("process", "get", second).rows[0][4], "yes")
 
-
-    def test_history_browsing_acknowledges_nothing(self) -> None:
+    def test_history_browsing_and_reacknowledgment_change_nothing(self) -> None:
         acknowledged = self.start("cargo history-old")
         self.ok("process", "finish", acknowledged, "0")
         self.ok("process", "acknowledge", acknowledged)
@@ -141,6 +138,10 @@ class SelectionTests(PanelTestCase):
 
         session.send("h")
         self.assertTrue(session.wait_for("history-old"), session.detail())
+        session.send("j")
+        session.read(0.5)
+        session.send("a")
+        session.read(0.5)
         session.send("h")
         session.read(0.5)
         self.quit(session)
@@ -237,7 +238,7 @@ class IsolationTests(PanelTestCase):
         self.quit(session)
 
         self.assertFalse(marker.exists(), "the panel shelled out to worklight")
-        self.assertEqual(self.ok("process", "get", run_id).rows[0][4], "no")
+        self.assertEqual(self.ok("process", "get", run_id).rows[0][4], "yes")
 
 
 if __name__ == "__main__":

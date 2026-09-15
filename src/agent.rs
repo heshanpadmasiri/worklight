@@ -138,10 +138,14 @@ impl AgentRun {
         self.observe(status, acknowledged)
     }
 
+    pub(crate) fn acknowledge_if_done(&mut self) -> Result<(), Error> {
+        let (status, acknowledged) = self.storage.acknowledge_agent_if_done(self.id)?;
+        self.observe(status, acknowledged)
+    }
+
     pub(crate) fn focus(&mut self, args: &[String]) -> Result<String, Error> {
         let target = self.orchestrator.navigate(args)?;
-        let (status, acknowledged) = self.storage.acknowledge_agent_if_done(self.id)?;
-        self.observe(status, acknowledged)?;
+        self.acknowledge_if_done()?;
         Ok(target)
     }
 
