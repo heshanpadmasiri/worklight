@@ -178,6 +178,19 @@ pub(crate) struct Cli {
 }
 #[derive(Subcommand, Debug)]
 enum Command {
+    Process {
+        #[command(subcommand)]
+        command: ProcessCommand,
+    },
+    Agent {
+        #[command(subcommand)]
+        command: AgentCommand,
+    },
+    Panel,
+}
+
+#[derive(Subcommand, Debug)]
+enum ProcessCommand {
     Start {
         command: String,
     },
@@ -204,11 +217,6 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         navigation_args: Vec<String>,
     },
-    Agent {
-        #[command(subcommand)]
-        command: AgentCommand,
-    },
-    Panel,
 }
 
 #[derive(Subcommand, Debug)]
@@ -243,7 +251,10 @@ enum AgentCommand {
 
 pub(crate) fn run() -> Result<(), Error> {
     let cli = Cli::parse();
-    if let Some(Command::Start { command }) = &cli.command {
+    if let Some(Command::Process {
+        command: ProcessCommand::Start { command },
+    }) = &cli.command
+    {
         if cli.dry_run || !should_track(command) {
             println!("0");
             return Ok(());
@@ -278,16 +289,24 @@ fn positive_agent(id: i64) -> Result<i64, Error> {
     }
 }
 fn dispatch(command: Command, storage: &Storage, dry_run: bool) -> Result<(), Error> {
-    let command = match command {
-        Command::Agent { command } => return dispatch_agent(command, storage, dry_run),
-        command => command,
-    };
+    match command {
+        Command::Process { command } => dispatch_process(command, storage, dry_run),
+        Command::Agent { command } => dispatch_agent(command, storage, dry_run),
+        Command::Panel => unreachable!(),
+    }
+}
+
+fn dispatch_process(
+    command: ProcessCommand,
+    storage: &Storage,
+    dry_run: bool,
+) -> Result<(), Error> {
     if dry_run {
         return preview(&command, storage);
     }
     match command {
-        Command::Start { command } => println!("{}", storage.start_process(&command)?.id()),
-        Command::Finish { id, exit_code } => {
+        ProcessCommand::Start { command } => println!("{}", storage.start_process(&command)?.id()),
+        ProcessCommand::Finish { id, exit_code } => {
             let id = positive(id)?;
             let status = u8::try_from(exit_code)
                 .map_err(|_| Error::Invalid(format!("exit code {exit_code} is outside 0..=255")))?;
@@ -295,11 +314,11 @@ fn dispatch(command: Command, storage: &Storage, dry_run: bool) -> Result<(), Er
             process.finish(status)?;
             println!("{}", format_row(&process.snapshot()));
         }
-        Command::Get { id } => println!(
+        ProcessCommand::Get { id } => println!(
             "{}",
             format_row(&storage.get_process(positive(id)?)?.snapshot())
         ),
-        Command::List { active } => {
+        ProcessCommand::List { active } => {
             for process in if active {
                 storage.running_process()?
             } else {
@@ -308,12 +327,12 @@ fn dispatch(command: Command, storage: &Storage, dry_run: bool) -> Result<(), Er
                 println!("{}", format_row(&process.snapshot()));
             }
         }
-        Command::Acknowledge { id } => {
+        ProcessCommand::Acknowledge { id } => {
             let mut process = storage.get_process(positive(id)?)?;
             process.acknowledge()?;
             println!("{}", format_row(&process.snapshot()));
         }
-        Command::Focus {
+        ProcessCommand::Focus {
             id,
             navigation_args,
         } => {
@@ -325,7 +344,6 @@ fn dispatch(command: Command, storage: &Storage, dry_run: bool) -> Result<(), Er
                 format_row(&process.snapshot())
             );
         }
-        Command::Agent { .. } | Command::Panel => unreachable!(),
     }
     Ok(())
 }
@@ -428,10 +446,12 @@ fn validate_navigation_args(kind: &str, navigation_args: &[String]) -> Result<()
     }
 }
 
-fn preview(command: &Command, storage: &Storage) -> Result<(), Error> {
+fn preview(command: &ProcessCommand, storage: &Storage) -> Result<(), Error> {
     match command {
-        Command::Start { .. } => unreachable!("start previews return before opening storage"),
-        Command::Finish { id, exit_code } => {
+        ProcessCommand::Start { .. } => {
+            unreachable!("start previews return before opening storage")
+        }
+        ProcessCommand::Finish { id, exit_code } => {
             let status = u8::try_from(*exit_code)
                 .map_err(|_| Error::Invalid(format!("exit code {exit_code} is outside 0..=255")))?;
             let mut process = storage.get_process(positive(*id)?)?;
@@ -444,11 +464,11 @@ fn preview(command: &Command, storage: &Storage) -> Result<(), Error> {
             }
             println!("{}", format_row(&process.snapshot()));
         }
-        Command::Get { id } => println!(
+        ProcessCommand::Get { id } => println!(
             "{}",
             format_row(&storage.get_process(positive(*id)?)?.snapshot())
         ),
-        Command::List { active } => {
+        ProcessCommand::List { active } => {
             for process in if *active {
                 storage.running_process()?
             } else {
@@ -457,14 +477,14 @@ fn preview(command: &Command, storage: &Storage) -> Result<(), Error> {
                 println!("{}", format_row(&process.snapshot()));
             }
         }
-        Command::Acknowledge { id } => {
+        ProcessCommand::Acknowledge { id } => {
             let mut process = storage.get_process(positive(*id)?)?;
             if matches!(process.state()?, ProcessState::Running) {
                 return Err(Error::StillRunning(*id));
             }
             println!("{}", format_row(&process.snapshot()));
         }
-        Command::Focus {
+        ProcessCommand::Focus {
             id,
             navigation_args,
         } => {
@@ -484,7 +504,6 @@ fn preview(command: &Command, storage: &Storage) -> Result<(), Error> {
                 format_row(&process.snapshot())
             );
         }
-        Command::Agent { .. } | Command::Panel => unreachable!(),
     }
     Ok(())
 }

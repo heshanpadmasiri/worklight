@@ -98,7 +98,7 @@ class ZshIntegrationTests(WorklightTestCase):
             "import json, os, sys\n"
             "with open(os.environ['SPY_LOG'], 'a') as stream:\n"
             "    stream.write(json.dumps(sys.argv[1:]) + '\\n')\n"
-            "if sys.argv[1] == 'start':\n"
+            "if sys.argv[1:3] == ['process', 'start']:\n"
             "    sys.stdout.write(os.environ.get('SPY_OUTPUT', ''))\n"
             "    sys.stderr.write('start diagnostic\\n')\n"
             "    raise SystemExit(int(os.environ.get('SPY_START_STATUS', '0')))\n"
@@ -139,7 +139,7 @@ class ZshIntegrationTests(WorklightTestCase):
                 self.assertEqual(completed.returncode, 0, completed.stderr)
                 self.assertEqual(completed.stdout, "pending:empty\n")
                 calls = [json.loads(line) for line in log.read_text().splitlines()]
-                self.assertEqual(calls, [["start", "cargo safe"]], index)
+                self.assertEqual(calls, [["process", "start", "cargo safe"]], index)
 
     def test_failed_and_unavailable_start_leave_no_pending_completion(self) -> None:
         spy, log, integration = self.make_spy()
@@ -160,7 +160,7 @@ class ZshIntegrationTests(WorklightTestCase):
         self.assertEqual((failed.returncode, failed.stdout, failed.stderr), (0, "pending:empty\n", ""))
         self.assertEqual(
             [json.loads(line) for line in log.read_text().splitlines()],
-            [["start", "cargo safe"]],
+            [["process", "start", "cargo safe"]],
         )
 
         log.unlink()
@@ -191,7 +191,13 @@ class ZshIntegrationTests(WorklightTestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stdout, "status:7\n")
         calls = [json.loads(line) for line in log.read_text().splitlines()]
-        self.assertEqual(calls, [["start", command], ["finish", "42", "7"]])
+        self.assertEqual(
+            calls,
+            [
+                ["process", "start", command],
+                ["process", "finish", "42", "7"],
+            ],
+        )
 
     def test_sourcing_twice_registers_once_and_preserves_other_hooks(self) -> None:
         script = self.root / "check.zsh"

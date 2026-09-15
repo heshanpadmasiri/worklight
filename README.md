@@ -13,12 +13,12 @@ CLI.
 
 ### Manually tracked processes
 
-    worklight start "cargo test"          # prints a tracking id
-    worklight finish <id> <exit_code>     # records the result
-    worklight get <id>
-    worklight list [--active]
-    worklight acknowledge <id>
-    worklight focus <id> [navigation arguments...]
+    worklight process start "cargo test"          # prints a tracking id
+    worklight process finish <id> <exit_code>     # records the result
+    worklight process get <id>
+    worklight process list [--active]
+    worklight process acknowledge <id>
+    worklight process focus <id> [navigation arguments...]
 
 A process state is derived from its exit code: no exit code means `running`,
 zero means `succeeded`, and anything else means `failed` (`130` is shown as

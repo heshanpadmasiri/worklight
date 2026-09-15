@@ -50,7 +50,7 @@ class LaunchTests(PanelTestCase):
 
     def test_the_panel_shows_every_column(self) -> None:
         run_id = self.start("cargo test")
-        self.ok("finish", run_id, "130")
+        self.ok("process", "finish", run_id, "130")
 
         session = self.panel()
 
@@ -63,13 +63,13 @@ class LaunchTests(PanelTestCase):
 
     def test_opening_the_panel_acknowledges_nothing(self) -> None:
         run_id = self.start("cargo test")
-        self.ok("finish", run_id, "0")
+        self.ok("process", "finish", run_id, "0")
 
         session = self.panel()
         self.assertTrue(session.wait_for("cargo test"), session.detail())
         self.quit(session)
 
-        self.assertEqual(self.ok("get", run_id).rows[0][4], "no")
+        self.assertEqual(self.ok("process", "get", run_id).rows[0][4], "no")
 
     def test_escape_also_quits(self) -> None:
         self.start("cargo build")
@@ -93,9 +93,9 @@ class RefreshTests(PanelTestCase):
 class SelectionTests(PanelTestCase):
     def test_selection_moves_and_a_has_no_effect(self) -> None:
         first = self.start("cargo first")
-        self.ok("finish", first, "0")
+        self.ok("process", "finish", first, "0")
         second = self.start("cargo second")
-        self.ok("finish", second, "1")
+        self.ok("process", "finish", second, "1")
         session = self.panel()
         self.assertTrue(session.wait_for("first"), session.detail())
         self.assertNotIn("a acknowledge", session.screen())
@@ -107,14 +107,14 @@ class SelectionTests(PanelTestCase):
         session.read(1.0)
         self.quit(session)
 
-        self.assertEqual(self.ok("get", first).rows[0][4], "no")
-        self.assertEqual(self.ok("get", second).rows[0][4], "no")
+        self.assertEqual(self.ok("process", "get", first).rows[0][4], "no")
+        self.assertEqual(self.ok("process", "get", second).rows[0][4], "no")
 
     def test_arrow_keys_select_without_acknowledging(self) -> None:
         first = self.start("cargo first")
-        self.ok("finish", first, "0")
+        self.ok("process", "finish", first, "0")
         second = self.start("cargo second")
-        self.ok("finish", second, "1")
+        self.ok("process", "finish", second, "1")
         session = self.panel()
         self.assertTrue(session.wait_for("first"), session.detail())
 
@@ -126,16 +126,16 @@ class SelectionTests(PanelTestCase):
         session.read(1.0)
         self.quit(session)
 
-        self.assertEqual(self.ok("get", first).rows[0][4], "no")
-        self.assertEqual(self.ok("get", second).rows[0][4], "no")
+        self.assertEqual(self.ok("process", "get", first).rows[0][4], "no")
+        self.assertEqual(self.ok("process", "get", second).rows[0][4], "no")
 
 
     def test_history_browsing_acknowledges_nothing(self) -> None:
         acknowledged = self.start("cargo history-old")
-        self.ok("finish", acknowledged, "0")
-        self.ok("acknowledge", acknowledged)
+        self.ok("process", "finish", acknowledged, "0")
+        self.ok("process", "acknowledge", acknowledged)
         current = self.start("cargo history-current")
-        self.ok("finish", current, "1")
+        self.ok("process", "finish", current, "1")
         session = self.panel()
         self.assertTrue(session.wait_for("history-current"), session.detail())
 
@@ -145,14 +145,14 @@ class SelectionTests(PanelTestCase):
         session.read(0.5)
         self.quit(session)
 
-        self.assertEqual(self.ok("get", acknowledged).rows[0][4], "yes")
-        self.assertEqual(self.ok("get", current).rows[0][4], "no")
+        self.assertEqual(self.ok("process", "get", acknowledged).rows[0][4], "yes")
+        self.assertEqual(self.ok("process", "get", current).rows[0][4], "no")
 
 
 class ErrorTests(PanelTestCase):
     def test_dry_run_enter_previews_without_navigating(self) -> None:
         run_id = self.start("cargo test")
-        self.ok("finish", run_id, "0")
+        self.ok("process", "finish", run_id, "0")
         session = self.panel("--dry-run")
         self.assertTrue(session.wait_for("cargo test"), session.detail())
 
@@ -160,11 +160,11 @@ class ErrorTests(PanelTestCase):
 
         self.assertTrue(session.wait_for("dry run: would navigate"), session.detail())
         self.quit(session)
-        self.assertEqual(self.ok("get", run_id).rows[0][4], "no")
+        self.assertEqual(self.ok("process", "get", run_id).rows[0][4], "no")
 
     def test_navigation_failures_are_shown_and_acknowledge_nothing(self) -> None:
         run_id = self.start("cargo test")
-        self.ok("finish", run_id, "0")
+        self.ok("process", "finish", run_id, "0")
         session = self.panel()
         self.assertTrue(session.wait_for("cargo test"), session.detail())
 
@@ -172,7 +172,7 @@ class ErrorTests(PanelTestCase):
 
         self.assertTrue(session.wait_for("unavailable"), session.detail())
         self.quit(session)
-        self.assertEqual(self.ok("get", run_id).rows[0][4], "no")
+        self.assertEqual(self.ok("process", "get", run_id).rows[0][4], "no")
 
     def test_failed_navigation_can_delete_the_target_from_the_database(self) -> None:
         run_id = self.start("cargo stale target")
@@ -202,7 +202,7 @@ class ErrorTests(PanelTestCase):
 
         self.assertNotIn("still running", session.screen())
         self.quit(session)
-        self.assertEqual(self.ok("get", run_id).rows[0][4], "no")
+        self.assertEqual(self.ok("process", "get", run_id).rows[0][4], "no")
 
     def test_a_storage_error_is_shown_without_leaving_the_terminal_broken(self) -> None:
         self.start("cargo test")
@@ -227,7 +227,7 @@ class IsolationTests(PanelTestCase):
         decoy.chmod(0o755)
 
         run_id = self.start("cargo test")
-        self.ok("finish", run_id, "0")
+        self.ok("process", "finish", run_id, "0")
         session = self.panel(env={"PATH": f"{decoy_dir}:{self.env['PATH']}"})
         self.assertTrue(session.wait_for("cargo test"), session.detail())
         session.send("a")
@@ -237,7 +237,7 @@ class IsolationTests(PanelTestCase):
         self.quit(session)
 
         self.assertFalse(marker.exists(), "the panel shelled out to worklight")
-        self.assertEqual(self.ok("get", run_id).rows[0][4], "no")
+        self.assertEqual(self.ok("process", "get", run_id).rows[0][4], "no")
 
 
 if __name__ == "__main__":

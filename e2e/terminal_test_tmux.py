@@ -116,10 +116,10 @@ class TmuxTestCase(WorklightTestCase):
         self.fail(f"pane {pane} wrote no output to {out}")
 
     def start_in_pane(self, pane: str, label: str) -> str:
-        return self.in_pane(pane, "start", label)
+        return self.in_pane(pane, "process", "start", label)
 
     def finish_in_pane(self, pane: str, run_id: str, exit_code: str) -> None:
-        self.in_pane(pane, "finish", run_id, exit_code)
+        self.in_pane(pane, "process", "finish", run_id, exit_code)
 
     def panes(self) -> list[str]:
         return self.tmux("list-panes", "-a", "-F", "#{pane_id}").splitlines()
@@ -175,7 +175,7 @@ class CaptureTests(TmuxTestCase):
 
         run_id = self.start_in_pane(pane, "cargo test")
 
-        row = self.ok("get", run_id).rows[0]
+        row = self.ok("process", "get", run_id).rows[0]
         self.assertEqual(row[KIND], "tmux")
         stored = subprocess.run(
             ["sqlite3", str(self.db), "SELECT pane FROM tmux"],
@@ -196,17 +196,17 @@ class CaptureTests(TmuxTestCase):
         ]
 
         self.assertEqual(len(set(ids)), len(panes))
-        self.assertEqual(len(self.ok("list").rows), len(panes))
+        self.assertEqual(len(self.ok("process", "list").rows), len(panes))
 
     def test_without_tmux_variables_a_shell_record_is_kept(self) -> None:
         # Running outside tmux inside the same environment falls back to the
         # shell rather than inventing tmux data.
         run_id = self.start("cargo test")
 
-        row = self.ok("get", run_id).rows[0]
+        row = self.ok("process", "get", run_id).rows[0]
 
         self.assertEqual(row[KIND], "shell")
-        self.assertIn("unavailable", self.fails("focus", run_id).err)
+        self.assertIn("unavailable", self.fails("process", "focus", run_id).err)
 
 
 class FocusTests(TmuxTestCase):
@@ -222,7 +222,7 @@ class FocusTests(TmuxTestCase):
         self.assertEqual(self.client_session(observer), "holding")
         self.assertEqual(self.client_session(client), "waiting")
 
-        self.ok("focus", run_id, "--client", client, env=self.focus_env())
+        self.ok("process", "focus", run_id, "--client", client, env=self.focus_env())
 
         self.assertEqual(self.client_session(client), "main")
         self.assertEqual(self.session_pane("main"), target)
@@ -234,18 +234,18 @@ class FocusTests(TmuxTestCase):
         run_id = self.start_in_pane(pane, "cargo test")
         self.finish_in_pane(pane, run_id, "0")
 
-        self.ok("focus", run_id, "--client", client, env=self.focus_env())
+        self.ok("process", "focus", run_id, "--client", client, env=self.focus_env())
 
-        self.assertEqual(self.ok("get", run_id).rows[0][ACK], "yes")
+        self.assertEqual(self.ok("process", "get", run_id).rows[0][ACK], "yes")
 
     def test_navigating_to_a_running_run_acknowledges_nothing(self) -> None:
         client = self.attach()
         pane = self.panes()[0]
         run_id = self.start_in_pane(pane, "cargo run -- sleep 100")
 
-        self.ok("focus", run_id, "--client", client, env=self.focus_env())
+        self.ok("process", "focus", run_id, "--client", client, env=self.focus_env())
 
-        self.assertEqual(self.ok("get", run_id).rows[0][ACK], "no")
+        self.assertEqual(self.ok("process", "get", run_id).rows[0][ACK], "no")
 
     def test_a_renamed_window_still_resolves(self) -> None:
         client = self.attach()
@@ -257,6 +257,7 @@ class FocusTests(TmuxTestCase):
         self.tmux("rename-session", "-t", "main", "elsewhere")
 
         result = self.ok(
+            "process",
             "focus", run_id, "--client", client, env=self.focus_env()
         )
 
@@ -271,11 +272,12 @@ class FocusTests(TmuxTestCase):
         self.tmux("kill-pane", "-t", doomed)
 
         result = self.fails(
+            "process",
             "focus", run_id, "--client", client, env=self.focus_env()
         )
 
         self.assertIn("no longer available", result.err)
-        self.assertEqual(self.ok("get", run_id).rows[0][ACK], "no")
+        self.assertEqual(self.ok("process", "get", run_id).rows[0][ACK], "no")
 
     def test_generated_popup_navigates_the_initiating_client(self) -> None:
         target = self.panes()[0]
@@ -309,7 +311,7 @@ class FocusTests(TmuxTestCase):
         target = self.panes()[0]
         run_id = self.start_in_pane(target, "cargo panel-completed")
         self.finish_in_pane(target, run_id, "0")
-        cwd = self.ok("get", run_id).rows[0][CWD]
+        cwd = self.ok("process", "get", run_id).rows[0][CWD]
         self.tmux("new-session", "-d", "-s", "panel")
         client = self.attach("panel")
         panel_pane = self.open_panel_for_client(client, "cargo panel-completed")
@@ -321,7 +323,7 @@ class FocusTests(TmuxTestCase):
         while time.monotonic() < deadline and self.client_details(client)[1] != target:
             time.sleep(0.1)
         self.assertEqual(self.client_details(client)[1], target)
-        self.assertEqual(self.ok("get", run_id).rows[0][ACK], "yes")
+        self.assertEqual(self.ok("process", "get", run_id).rows[0][ACK], "yes")
 
         # Persisted acknowledgment survives reopening and keeps the row out of
         # the normal view.
@@ -329,7 +331,7 @@ class FocusTests(TmuxTestCase):
         self.open_panel_for_client(client, "worklight")
         reopened = self.tmux("capture-pane", "-p", "-t", panel_pane)
         self.assertNotIn("cargo panel-completed", reopened)
-        self.assertEqual(self.ok("get", run_id).rows[0][ACK], "yes")
+        self.assertEqual(self.ok("process", "get", run_id).rows[0][ACK], "yes")
         self.tmux("send-keys", "-t", panel_pane, "q")
 
     def test_panel_enter_navigates_to_running_run_without_acknowledging(self) -> None:
@@ -344,7 +346,7 @@ class FocusTests(TmuxTestCase):
         while time.monotonic() < deadline and self.client_details(client)[1] != target:
             time.sleep(0.1)
         self.assertEqual(self.client_details(client)[1], target)
-        self.assertEqual(self.ok("get", run_id).rows[0][ACK], "no")
+        self.assertEqual(self.ok("process", "get", run_id).rows[0][ACK], "no")
 
     def test_failed_panel_navigation_neither_moves_nor_acknowledges(self) -> None:
         self.tmux("split-window", "-t", "main")
@@ -359,7 +361,7 @@ class FocusTests(TmuxTestCase):
         self.tmux("send-keys", "-t", panel_pane, "Enter")
         time.sleep(1)
         self.assertEqual(self.client_details(client)[1], panel_pane)
-        self.assertEqual(self.ok("get", run_id).rows[0][ACK], "no")
+        self.assertEqual(self.ok("process", "get", run_id).rows[0][ACK], "no")
         screen = self.tmux("capture-pane", "-p", "-t", panel_pane)
         self.assertIn("no longer available", screen)
         self.tmux("send-keys", "-t", panel_pane, "q")
@@ -374,10 +376,10 @@ class FocusTests(TmuxTestCase):
         client = self.attach()
         current_pane = self.panes()[0]
 
-        self.ok("focus", run_id, "--client", client, env=self.focus_env())
+        self.ok("process", "focus", run_id, "--client", client, env=self.focus_env())
 
         self.assertEqual(self.client_details(client)[1], current_pane)
-        self.assertEqual(self.ok("get", run_id).rows[0][ACK], "yes")
+        self.assertEqual(self.ok("process", "get", run_id).rows[0][ACK], "yes")
 
 
 if __name__ == "__main__":

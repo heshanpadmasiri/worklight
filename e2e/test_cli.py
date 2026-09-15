@@ -35,12 +35,12 @@ class StartTests(WorklightTestCase):
         second = self.start("cargo test")
 
         self.assertNotEqual(first, second)
-        self.assertEqual(len(self.ok("list").rows), 2)
+        self.assertEqual(len(self.ok("process", "list").rows), 2)
 
     def test_a_started_run_is_running_with_no_exit_code(self) -> None:
         run_id = self.start("cargo run -- sleep 100")
 
-        row = self.ok("get", run_id).rows[0]
+        row = self.ok("process", "get", run_id).rows[0]
 
         self.assertEqual(row[STATE], "running")
         self.assertEqual(row[EXIT], "-")
@@ -57,12 +57,12 @@ class StartTests(WorklightTestCase):
     def test_records_persist_across_invocations(self) -> None:
         run_id = self.start("cargo build")
 
-        self.assertEqual(self.ok("get", run_id).rows[0][LABEL], "cargo build")
+        self.assertEqual(self.ok("process", "get", run_id).rows[0][LABEL], "cargo build")
 
     def test_control_characters_are_escaped_in_tabular_output(self) -> None:
         run_id = self.start("cargo line one\tcolumn\\name\nline two\rline three")
 
-        result = self.ok("get", run_id)
+        result = self.ok("process", "get", run_id)
 
         self.assertEqual(len(result.rows), 1)
         self.assertEqual(len(result.rows[0]), 8)
@@ -86,7 +86,7 @@ class StartTests(WorklightTestCase):
         )
 
     def test_ineligible_start_returns_zero_without_creating_storage(self) -> None:
-        result = self.ok("start", "python test.py")
+        result = self.ok("process", "start", "python test.py")
 
         self.assertEqual(result.out, "0\n")
         self.assertEqual(result.err, "")
@@ -101,6 +101,7 @@ class StartTests(WorklightTestCase):
             str(self.binary),
             "--database",
             str(impossible_db),
+            "process",
             "start",
             "python test.py",
         ]
@@ -130,51 +131,51 @@ class FinishTests(WorklightTestCase):
         for code, state in (("0", "succeeded"), ("1", "failed/1"), ("130", "failed/130")):
             with self.subTest(code=code):
                 run_id = self.start(f"cargo run -- exit {code}")
-                row = self.ok("finish", run_id, code).rows[0]
+                row = self.ok("process", "finish", run_id, code).rows[0]
                 self.assertEqual(row[STATE], state)
                 self.assertEqual(row[EXIT], code)
 
     def test_finishing_an_unknown_id_fails(self) -> None:
-        result = self.fails("finish", "9999", "0")
+        result = self.fails("process", "finish", "9999", "0")
 
         self.assertIn("no process with id 9999", result.err)
 
     def test_invalid_input_fails(self) -> None:
         run_id = self.start("cargo test")
 
-        self.assertIn("256", self.fails("finish", run_id, "256").err)
-        self.fails("finish", run_id)
-        self.fails("finish")
-        self.assertEqual(self.ok("get", run_id).rows[0][STATE], "running")
+        self.assertIn("256", self.fails("process", "finish", run_id, "256").err)
+        self.fails("process", "finish", run_id)
+        self.fails("process", "finish")
+        self.assertEqual(self.ok("process", "get", run_id).rows[0][STATE], "running")
 
     def test_an_identical_repeated_completion_is_rejected_without_changes(self) -> None:
         run_id = self.start("cargo test")
-        first = self.ok("finish", run_id, "3").rows[0]
+        first = self.ok("process", "finish", run_id, "3").rows[0]
 
-        repeated = self.fails("finish", run_id, "3")
+        repeated = self.fails("process", "finish", run_id, "3")
 
         self.assertIn("already finished", repeated.err)
-        current = self.ok("get", run_id).rows[0]
+        current = self.ok("process", "get", run_id).rows[0]
         self.assertEqual(first[:ELAPSED], current[:ELAPSED])
         self.assertEqual(first[ACK:], current[ACK:])
 
     def test_a_conflicting_completion_does_not_overwrite_the_record(self) -> None:
         run_id = self.start("cargo test")
-        self.ok("finish", run_id, "3")
+        self.ok("process", "finish", run_id, "3")
 
-        result = self.fails("finish", run_id, "0")
+        result = self.fails("process", "finish", run_id, "0")
 
         self.assertIn("already finished", result.err)
-        self.assertEqual(self.ok("get", run_id).rows[0][EXIT], "3")
+        self.assertEqual(self.ok("process", "get", run_id).rows[0][EXIT], "3")
 
 
 class AcknowledgeTests(WorklightTestCase):
     def test_acknowledgment_is_a_boolean_that_preserves_completion(self) -> None:
         run_id = self.start("cargo test")
-        finished = self.ok("finish", run_id, "1").rows[0]
+        finished = self.ok("process", "finish", run_id, "1").rows[0]
 
-        acknowledged = self.ok("acknowledge", run_id).rows[0]
-        repeated = self.ok("acknowledge", run_id).rows[0]
+        acknowledged = self.ok("process", "acknowledge", run_id).rows[0]
+        repeated = self.ok("process", "acknowledge", run_id).rows[0]
 
         self.assertEqual(acknowledged[ACK], "yes")
         self.assertEqual(repeated[ACK], "yes")
@@ -184,19 +185,19 @@ class AcknowledgeTests(WorklightTestCase):
     def test_a_running_run_cannot_be_acknowledged(self) -> None:
         run_id = self.start("cargo run -- sleep 100")
 
-        self.fails("acknowledge", run_id)
+        self.fails("process", "acknowledge", run_id)
 
-        self.assertEqual(self.ok("get", run_id).rows[0][ACK], "no")
+        self.assertEqual(self.ok("process", "get", run_id).rows[0][ACK], "no")
 
 
 class ListTests(WorklightTestCase):
     def test_list_all_and_list_active(self) -> None:
         running = self.start("cargo run -- sleep 100")
         finished = self.start("cargo test")
-        self.ok("finish", finished, "0")
+        self.ok("process", "finish", finished, "0")
 
-        listed = [row[ID] for row in self.ok("list").rows]
-        active = [row[ID] for row in self.ok("list", "--active").rows]
+        listed = [row[ID] for row in self.ok("process", "list").rows]
+        active = [row[ID] for row in self.ok("process", "list", "--active").rows]
 
         self.assertEqual(sorted(listed), sorted([running, finished]))
         self.assertEqual(active, [running])
@@ -205,7 +206,7 @@ class ListTests(WorklightTestCase):
         tmux_env = {"TMUX": "/tmp/worklight-socket,4242,0", "TMUX_PANE": "%9"}
         self.start("cargo test", env=tmux_env)
 
-        row = self.ok("list").rows[0]
+        row = self.ok("process", "list").rows[0]
 
         self.assertEqual(row[KIND], "tmux")
         self.assertTrue(row[CWD])
@@ -214,8 +215,8 @@ class ListTests(WorklightTestCase):
         for index in range(5):
             self.start(f"cargo job {index}")
 
-        first = [row[ID] for row in self.ok("list").rows]
-        second = [row[ID] for row in self.ok("list").rows]
+        first = [row[ID] for row in self.ok("process", "list").rows]
+        second = [row[ID] for row in self.ok("process", "list").rows]
 
         self.assertEqual(first, second)
 
@@ -226,7 +227,7 @@ class OrchestratorTests(WorklightTestCase):
             "cargo test", env={"TMUX": "/tmp/worklight-socket,4242,0", "TMUX_PANE": "%3"}
         )
 
-        row = self.ok("get", run_id).rows[0]
+        row = self.ok("process", "get", run_id).rows[0]
 
         self.assertEqual(row[KIND], "tmux")
         with sqlite3.connect(self.db) as conn:
@@ -237,7 +238,7 @@ class OrchestratorTests(WorklightTestCase):
     def test_outside_tmux_a_shell_record_is_stored(self) -> None:
         run_id = self.start("cargo test")
 
-        row = self.ok("get", run_id).rows[0]
+        row = self.ok("process", "get", run_id).rows[0]
 
         self.assertEqual(row[KIND], "shell")
         with sqlite3.connect(self.db) as conn:
@@ -252,6 +253,7 @@ class OrchestratorTests(WorklightTestCase):
         )
 
         self.ok(
+            "process",
             "finish",
             run_id,
             "0",
@@ -264,23 +266,23 @@ class OrchestratorTests(WorklightTestCase):
 
     def test_focusing_a_shell_record_reports_that_it_is_unavailable(self) -> None:
         run_id = self.start("cargo test")
-        self.ok("finish", run_id, "0")
+        self.ok("process", "finish", run_id, "0")
 
-        result = self.fails("focus", run_id)
+        result = self.fails("process", "focus", run_id)
 
         self.assertIn("unavailable", result.err)
         # A missing destination does not change process state.
-        self.assertEqual(self.ok("get", run_id).rows[0][ACK], "no")
+        self.assertEqual(self.ok("process", "get", run_id).rows[0][ACK], "no")
 
 
 class DryRunTests(WorklightTestCase):
     def test_a_dry_run_start_prints_zero_and_saves_nothing(self) -> None:
-        result = self.ok("--dry-run", "start", "cargo build")
+        result = self.ok("--dry-run", "process", "start", "cargo build")
 
         self.assertEqual(result.out, "0\n")
         self.assertEqual(result.err, "")
         self.assertFalse(self.db.exists())
-        self.assertEqual(self.ok("list").rows, [])
+        self.assertEqual(self.ok("process", "list").rows, [])
 
     def test_dry_run_start_skips_all_validation_for_any_label(self) -> None:
         blocked = self.root / "not-a-directory"
@@ -292,6 +294,7 @@ class DryRunTests(WorklightTestCase):
                     "--database",
                     str(blocked / "worklight.db"),
                     "--dry-run",
+                    "process",
                     "start",
                     label,
                 ],
@@ -306,33 +309,33 @@ class DryRunTests(WorklightTestCase):
 
     def test_a_dry_run_does_not_write_to_an_existing_database(self) -> None:
         run_id = self.start("cargo test")
-        before = stable(self.ok("list").rows)
+        before = stable(self.ok("process", "list").rows)
 
-        self.ok("--dry-run", "start", "another")
-        self.ok("--dry-run", "finish", run_id, "0")
-        self.ok("--dry-run", "list")
+        self.ok("--dry-run", "process", "start", "another")
+        self.ok("--dry-run", "process", "finish", run_id, "0")
+        self.ok("--dry-run", "process", "list")
 
-        self.assertEqual(stable(self.ok("list").rows), before)
-        self.assertEqual(self.ok("get", run_id).rows[0][STATE], "running")
+        self.assertEqual(stable(self.ok("process", "list").rows), before)
+        self.assertEqual(self.ok("process", "get", run_id).rows[0][STATE], "running")
 
     def test_a_dry_run_focus_reports_the_destination_without_navigating(self) -> None:
         run_id = self.start(
             "cargo test", env={"TMUX": "/tmp/worklight-socket,4242,0", "TMUX_PANE": "%3"}
         )
-        self.ok("finish", run_id, "0", env={"TMUX": "/tmp/worklight-socket,4242,0", "TMUX_PANE": "%3"})
+        self.ok("process", "finish", run_id, "0", env={"TMUX": "/tmp/worklight-socket,4242,0", "TMUX_PANE": "%3"})
 
         # The socket does not exist, so a real focus would fail; a preview
         # never reaches tmux at all.
-        result = self.ok("--dry-run", "focus", run_id)
+        result = self.ok("--dry-run", "process", "focus", run_id)
 
         self.assertIn("%3", result.line)
-        self.assertEqual(self.ok("get", run_id).rows[0][ACK], "no")
+        self.assertEqual(self.ok("process", "get", run_id).rows[0][ACK], "no")
 
     def test_a_dry_run_still_reports_conflicts(self) -> None:
         run_id = self.start("cargo test")
-        self.ok("finish", run_id, "1")
+        self.ok("process", "finish", run_id, "1")
 
-        result = self.fails("--dry-run", "finish", run_id, "0")
+        result = self.fails("--dry-run", "process", "finish", run_id, "0")
 
         self.assertIn("already finished", result.err)
 
@@ -450,7 +453,7 @@ class AgentCliTests(WorklightTestCase):
 
 class DatabaseTests(WorklightTestCase):
     def test_reading_a_missing_database_creates_nothing(self) -> None:
-        result = self.ok("list")
+        result = self.ok("process", "list")
 
         self.assertEqual(result.rows, [])
         self.assertFalse(self.db.exists())
@@ -459,14 +462,14 @@ class DatabaseTests(WorklightTestCase):
     def test_an_unknown_id_is_an_error_not_an_empty_success(self) -> None:
         self.start("cargo test")
 
-        self.assertIn("no process with id", self.fails("get", "9999").err)
+        self.assertIn("no process with id", self.fails("process", "get", "9999").err)
 
     def test_an_incompatible_database_is_not_replaced(self) -> None:
         self.start("cargo test")
         with sqlite3.connect(self.db) as conn:
             conn.execute("PRAGMA user_version = 99")
 
-        result = self.fails("list")
+        result = self.fails("process", "list")
 
         self.assertIn("incompatible", result.err)
         with sqlite3.connect(self.db) as conn:
@@ -478,7 +481,7 @@ class DatabaseTests(WorklightTestCase):
         self.db.parent.mkdir(parents=True)
         self.db.write_bytes(b"definitely not a database")
 
-        self.fails("list")
+        self.fails("process", "list")
 
         self.assertEqual(self.db.read_bytes(), b"definitely not a database")
 
@@ -488,14 +491,14 @@ class ConcurrencyTests(WorklightTestCase):
         with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
             results = list(
                 pool.map(
-                    lambda index: self.run_worklight("start", f"cargo job {index}"),
+                    lambda index: self.run_worklight("process", "start", f"cargo job {index}"),
                     range(16),
                 )
             )
 
         for result in results:
             self.assertEqual(result.code, 0, str(result))
-        self.assertEqual(len(self.ok("list").rows), 16)
+        self.assertEqual(len(self.ok("process", "list").rows), 16)
 
     def test_concurrent_callers_finish_their_own_runs(self) -> None:
         ids = [self.start(f"cargo job {index}") for index in range(8)]
@@ -503,7 +506,7 @@ class ConcurrencyTests(WorklightTestCase):
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
             results = list(
                 pool.map(
-                    lambda pair: self.run_worklight("finish", pair[1], str(pair[0])),
+                    lambda pair: self.run_worklight("process", "finish", pair[1], str(pair[0])),
                     enumerate(ids),
                 )
             )
@@ -511,8 +514,8 @@ class ConcurrencyTests(WorklightTestCase):
         for result in results:
             self.assertEqual(result.code, 0, str(result))
         for index, run_id in enumerate(ids):
-            self.assertEqual(self.ok("get", run_id).rows[0][EXIT], str(index))
-        self.assertEqual(self.ok("list", "--active").rows, [])
+            self.assertEqual(self.ok("process", "get", run_id).rows[0][EXIT], str(index))
+        self.assertEqual(self.ok("process", "list", "--active").rows, [])
 
     def test_only_one_of_two_conflicting_completions_wins(self) -> None:
         run_id = self.start("cargo test")
@@ -520,13 +523,13 @@ class ConcurrencyTests(WorklightTestCase):
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
             results = list(
                 pool.map(
-                    lambda code: self.run_worklight("finish", run_id, code), ["0", "1"]
+                    lambda code: self.run_worklight("process", "finish", run_id, code), ["0", "1"]
                 )
             )
 
         codes = sorted(result.code for result in results)
         self.assertEqual(codes, [0, 1], "\n\n".join(str(r) for r in results))
-        self.assertIn(self.ok("get", run_id).rows[0][EXIT], {"0", "1"})
+        self.assertIn(self.ok("process", "get", run_id).rows[0][EXIT], {"0", "1"})
 
 
 if __name__ == "__main__":

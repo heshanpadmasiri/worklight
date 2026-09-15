@@ -253,7 +253,7 @@ _worklight_hook_preexec() {{
   typeset -g _worklight_hook_pending_id=''
   local captured id marker hook_status
   captured="$(
-    {quoted_binary} start "$1" 2>/dev/null
+    {quoted_binary} process start "$1" 2>/dev/null
     hook_status=$?
     print -r -- "worklight-status:$hook_status"
   )"
@@ -271,7 +271,7 @@ _worklight_hook_precmd() {{
   local id="$_worklight_hook_pending_id"
   typeset -g _worklight_hook_pending_id=''
   if [[ -n "$id" ]]; then
-    {quoted_binary} finish "$id" "$command_status" >/dev/null 2>&1 || true
+    {quoted_binary} process finish "$id" "$command_status" >/dev/null 2>&1 || true
   fi
   return "$command_status"
 }}
