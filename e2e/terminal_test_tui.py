@@ -174,6 +174,24 @@ class ErrorTests(PanelTestCase):
         self.quit(session)
         self.assertEqual(self.ok("get", run_id).rows[0][4], "no")
 
+    def test_failed_navigation_can_delete_the_target_from_the_database(self) -> None:
+        run_id = self.start("cargo stale target")
+        session = self.panel()
+        self.assertTrue(session.wait_for("cargo stale target"), session.detail())
+
+        session.send("\r")
+        self.assertTrue(session.wait_for("Delete", timeout=5), session.detail())
+        session.send("y")
+        session.read(1.0)
+
+        with sqlite3.connect(self.db) as conn:
+            self.assertEqual(
+                conn.execute("SELECT count(*) FROM processes WHERE id=?", (run_id,)).fetchone()[0],
+                0,
+            )
+            self.assertEqual(conn.execute("SELECT count(*) FROM shells").fetchone()[0], 0)
+        self.quit(session)
+
     def test_a_has_no_effect_on_a_running_run(self) -> None:
         run_id = self.start("cargo run -- sleep 100")
         session = self.panel()

@@ -94,6 +94,55 @@ fn schema_has_new_lifecycle_and_partial_indexes() {
 }
 
 #[test]
+fn deleting_tracked_entities_removes_their_orchestrators() {
+    let fixture = Fixture::new();
+    let storage = fixture.storage();
+    let process = storage.start_process("delete process").unwrap();
+    let agent = storage.register_agent("pi").unwrap();
+
+    storage.delete_process(process.id()).unwrap();
+    storage.delete_agent(agent.id()).unwrap();
+
+    assert!(matches!(
+        storage.get_process(process.id()),
+        Err(Error::NotFound(id)) if id == process.id()
+    ));
+    assert!(matches!(
+        storage.get_agent(agent.id()),
+        Err(Error::AgentNotFound(id)) if id == agent.id()
+    ));
+    let connection = Connection::open(fixture.path()).unwrap();
+    let orchestrators: i64 = connection
+        .query_row(
+            "SELECT (SELECT count(*) FROM shells) + (SELECT count(*) FROM tmux)",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(orchestrators, 0);
+}
+
+#[test]
+fn delete_reports_missing_and_read_only_entities() {
+    let fixture = Fixture::new();
+    let storage = fixture.storage();
+    let id = storage.start_process("readonly delete").unwrap().id();
+    assert!(matches!(
+        storage.delete_process(id + 1),
+        Err(Error::NotFound(missing)) if missing == id + 1
+    ));
+    assert!(matches!(
+        storage.delete_agent(id),
+        Err(Error::AgentNotFound(missing)) if missing == id
+    ));
+    assert!(matches!(
+        fixture.readonly().delete_process(id),
+        Err(Error::ReadOnly)
+    ));
+    assert!(storage.get_process(id).is_ok());
+}
+
+#[test]
 fn read_only_is_a_mutation_backstop() {
     let fixture = Fixture::new();
     let storage = fixture.storage();

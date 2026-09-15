@@ -343,6 +343,10 @@ impl Database {
         })
     }
 
+    pub(super) fn delete_process(&self, id: i64) -> Result<(), Error> {
+        self.with_writable(|connection| delete_tracked(connection, "processes", id))
+    }
+
     pub(super) fn create_agent(
         &self,
         storage: &Storage,
@@ -599,6 +603,64 @@ impl Database {
             Ok((status, true))
         })
     }
+
+    pub(super) fn delete_agent(&self, id: i64) -> Result<(), Error> {
+        self.with_writable(|connection| delete_tracked(connection, "agents", id))
+    }
+}
+
+fn delete_tracked(connection: &mut Connection, table: &str, id: i64) -> Result<(), Error> {
+    debug_assert!(matches!(table, "processes" | "agents"));
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_error)?;
+    let sql = format!("SELECT shell,tmux,orchestrator_id FROM {table} WHERE id=?1");
+    let (shell, tmux, orchestrator_id): (i64, i64, i64) = transaction
+        .query_row(&sql, [id], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .map_err(|error| match error {
+            rusqlite::Error::QueryReturnedNoRows if table == "agents" => Error::AgentNotFound(id),
+            rusqlite::Error::QueryReturnedNoRows => Error::NotFound(id),
+            error => map_error(error),
+        })?;
+    let changed = transaction
+        .execute(&format!("DELETE FROM {table} WHERE id=?1"), [id])
+        .map_err(map_error)?;
+    if changed != 1 {
+        return Err(Error::Database(format!(
+            "{table} row {id} changed during deletion"
+        )));
+    }
+
+    let (orchestrator_table, flag) = match (shell, tmux) {
+        (1, 0) => ("shells", "shell"),
+        (0, 1) => ("tmux", "tmux"),
+        _ => {
+            return Err(Error::CorruptData(format!(
+                "{table} row {id} has invalid orchestrator flags"
+            )))
+        }
+    };
+    let references: i64 = transaction
+        .query_row(
+            &format!(
+                "SELECT (SELECT count(*) FROM processes WHERE {flag}=1 AND orchestrator_id=?1) + \
+                 (SELECT count(*) FROM agents WHERE {flag}=1 AND orchestrator_id=?1)"
+            ),
+            [orchestrator_id],
+            |row| row.get(0),
+        )
+        .map_err(map_error)?;
+    if references == 0 {
+        transaction
+            .execute(
+                &format!("DELETE FROM {orchestrator_table} WHERE id=?1"),
+                [orchestrator_id],
+            )
+            .map_err(map_error)?;
+    }
+    transaction.commit().map_err(map_error)
 }
 
 fn read_state(connection: &Connection, id: i64) -> Result<ProcessState, Error> {

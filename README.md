@@ -98,9 +98,10 @@ normal synchronization if the same runtime starts working again.
 Opening or refreshing the panel acknowledges nothing. Successful navigation
 to a completed process acknowledges it. Successful navigation to an agent
 conditionally acknowledges it only if its current stored status is still
-`done`; failed navigation never acknowledges. The `h` history view is
-process-only and does nothing to agent state. Administrative acknowledgment
-remains available through the process and agent CLI commands.
+`done`; failed navigation never acknowledges and opens a confirmation popup
+that can delete the stale agent or process from the database. The `h` history
+view is process-only and does nothing to agent state. Administrative
+acknowledgment remains available through the process and agent CLI commands.
 
 ## Where work started
 

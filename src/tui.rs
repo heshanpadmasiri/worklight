@@ -15,9 +15,9 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Layout};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
+use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState, Wrap};
 use ratatui::{Frame, Terminal};
 
 use crate::agent::{AgentRun, AgentSnapshot, AgentStatus};
@@ -83,6 +83,12 @@ struct Panel {
     snapshot: PanelSnapshot,
     agent_state: TableState,
     process_state: TableState,
+    delete_prompt: Option<DeletePrompt>,
+}
+
+struct DeletePrompt {
+    target: TrackedId,
+    error: String,
 }
 
 impl Panel {
@@ -99,6 +105,7 @@ impl Panel {
             },
             agent_state: TableState::default(),
             process_state: TableState::default(),
+            delete_prompt: None,
         }
     }
 
@@ -135,12 +142,14 @@ enum PanelRequest {
         target: TrackedId,
         args: Vec<String>,
     },
+    Delete(TrackedId),
     Shutdown,
 }
 
 enum PanelEvent {
     Updated(PanelSnapshot),
     Focused,
+    FocusFailed { target: TrackedId, message: String },
     Failed(String),
 }
 
@@ -210,17 +219,20 @@ fn worker(
         match requests.recv_timeout(wait) {
             Ok(PanelRequest::Shutdown) => return Ok(()),
             Ok(request) => {
-                let result = match request {
+                let (result, focus_target) = match request {
                     PanelRequest::MoveSelection(delta) => {
                         data.move_selection(delta);
-                        Ok(false)
+                        (Ok(false), None)
                     }
                     PanelRequest::Resize(rows) => {
                         data.resize(rows);
-                        Ok(false)
+                        (Ok(false), None)
                     }
-                    PanelRequest::ToggleHistory => data.toggle_history().map(|()| false),
-                    PanelRequest::Focus { target, args } => data.focus(target, &args),
+                    PanelRequest::ToggleHistory => (data.toggle_history().map(|()| false), None),
+                    PanelRequest::Focus { target, args } => {
+                        (data.focus(target, &args), Some(target))
+                    }
+                    PanelRequest::Delete(target) => (data.delete(target).map(|()| false), None),
                     PanelRequest::Shutdown => unreachable!(),
                 };
                 match result {
@@ -235,7 +247,14 @@ fn worker(
                     Err(error) => {
                         let message = error.to_string();
                         data.message = Some(message.clone());
-                        if events.send(PanelEvent::Failed(message)).is_err() {
+                        let event = match (focus_target, &error) {
+                            (Some(target), Error::Navigation(_)) => PanelEvent::FocusFailed {
+                                target,
+                                message: message.clone(),
+                            },
+                            _ => PanelEvent::Failed(message.clone()),
+                        };
+                        if events.send(event).is_err() {
                             return Ok(());
                         }
                     }
@@ -488,6 +507,25 @@ impl PanelData {
         Ok(true)
     }
 
+    fn delete(&mut self, target: TrackedId) -> Result<(), Error> {
+        if self.dry_run {
+            return Err(Error::ReadOnly);
+        }
+        match target {
+            TrackedId::Agent(id) => {
+                self.storage.delete_agent(id)?;
+                self.agents.remove(&id);
+            }
+            TrackedId::Process(id) => {
+                self.storage.delete_process(id)?;
+                self.processes.remove(&id);
+            }
+        }
+        self.message = None;
+        self.normalize_selection();
+        Ok(())
+    }
+
     fn snapshot(&self) -> PanelSnapshot {
         let ids = self.matching_ids();
         let start = self.viewport_start.min(ids.len());
@@ -675,20 +713,36 @@ fn event_loop(
 
         if event::poll(REDRAW).map_err(terminal_error)? {
             match event::read().map_err(terminal_error)? {
-                Event::Key(key) if key.kind != KeyEventKind::Release => match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        send_request(requests, PanelRequest::MoveSelection(1))?;
+                Event::Key(key) if key.kind != KeyEventKind::Release => {
+                    if panel.delete_prompt.is_some() {
+                        match key.code {
+                            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                let prompt = panel.delete_prompt.take().expect("prompt checked");
+                                send_request(requests, PanelRequest::Delete(prompt.target))?;
+                            }
+                            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                                panel.delete_prompt = None;
+                            }
+                            KeyCode::Char('q') => return Ok(()),
+                            _ => {}
+                        }
+                    } else {
+                        match key.code {
+                            KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                send_request(requests, PanelRequest::MoveSelection(1))?;
+                            }
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                send_request(requests, PanelRequest::MoveSelection(-1))?;
+                            }
+                            KeyCode::Char('h') => {
+                                send_request(requests, PanelRequest::ToggleHistory)?;
+                            }
+                            KeyCode::Enter => navigate(&panel, requests)?,
+                            _ => {}
+                        }
                     }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        send_request(requests, PanelRequest::MoveSelection(-1))?;
-                    }
-                    KeyCode::Char('h') => {
-                        send_request(requests, PanelRequest::ToggleHistory)?;
-                    }
-                    KeyCode::Enter => navigate(&panel, requests)?,
-                    _ => {}
-                },
+                }
                 Event::Resize(_, height) => {
                     send_request(requests, PanelRequest::Resize(viewport_rows(height)))?;
                 }
@@ -705,6 +759,17 @@ fn consume_events(events: &Receiver<PanelEvent>, panel: &mut Panel) -> Result<bo
     loop {
         match events.try_recv() {
             Ok(PanelEvent::Updated(snapshot)) => latest = Some(snapshot),
+            Ok(PanelEvent::FocusFailed { target, message }) => {
+                if let Some(snapshot) = latest.as_mut() {
+                    snapshot.message = Some(message.clone());
+                } else {
+                    panel.snapshot.message = Some(message.clone());
+                }
+                panel.delete_prompt = Some(DeletePrompt {
+                    target,
+                    error: message,
+                });
+            }
             Ok(PanelEvent::Failed(message)) => {
                 if let Some(snapshot) = latest.as_mut() {
                     snapshot.message = Some(message);
@@ -890,6 +955,42 @@ fn draw(frame: &mut Frame, panel: &mut Panel) {
         Paragraph::new("j/k or arrows select  enter navigate  h history  q quit"),
         areas[2],
     );
+
+    if let Some(prompt) = &panel.delete_prompt {
+        let kind = match prompt.target {
+            TrackedId::Agent(_) => "agent",
+            TrackedId::Process(_) => "process",
+        };
+        let id = match prompt.target {
+            TrackedId::Agent(id) | TrackedId::Process(id) => id,
+        };
+        let area = centered_popup(frame.area(), 72, 7);
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Paragraph::new(format!(
+                "Navigation failed: {}\n\nDelete {kind} {id} from the database? (y/N)",
+                prompt.error
+            ))
+            .wrap(Wrap { trim: true })
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Navigation failed"),
+            ),
+            area,
+        );
+    }
+}
+
+fn centered_popup(area: Rect, preferred_width: u16, preferred_height: u16) -> Rect {
+    let width = preferred_width.min(area.width.saturating_sub(2)).max(1);
+    let height = preferred_height.min(area.height.saturating_sub(2)).max(1);
+    Rect::new(
+        area.x + area.width.saturating_sub(width) / 2,
+        area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    )
 }
 
 fn format_elapsed(elapsed: Duration) -> String {
@@ -1165,6 +1266,33 @@ mod tests {
         assert!(rows[1].contains("command"));
         assert!(!rows[1].contains("exit"));
         assert!(rows[5].contains("exit"));
+    }
+
+    #[test]
+    fn deleting_a_failed_target_is_typed_and_updates_the_panel() {
+        let fixture = Fixture::new();
+        let writer = fixture.storage();
+        let process = writer
+            .create_process("process", Path::new("/process"), None)
+            .unwrap();
+        let agent = writer
+            .create_agent("pi", Path::new("/agent"), None)
+            .unwrap();
+        assert_eq!(process.id(), agent.id());
+        let mut panel = PanelData::load(fixture.storage(), false).unwrap();
+        panel.resize(20);
+
+        panel.delete(TrackedId::Agent(agent.id())).unwrap();
+
+        assert!(matches!(
+            writer.get_agent(agent.id()),
+            Err(Error::AgentNotFound(_))
+        ));
+        assert!(writer.get_process(process.id()).is_ok());
+        assert_eq!(
+            row_ids(&panel.snapshot()),
+            vec![TrackedId::Process(process.id())]
+        );
     }
 
     #[test]

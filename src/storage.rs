@@ -102,6 +102,12 @@ impl Storage {
     pub(crate) fn acknowledge_process(&self, id: i64) -> Result<ProcessState, Error> {
         self.database.acknowledge_process(id)
     }
+    pub(crate) fn delete_process(&self, id: i64) -> Result<(), Error> {
+        if id <= 0 {
+            return Err(Error::Invalid(format!("process id {id} must be positive")));
+        }
+        self.database.delete_process(id)
+    }
     pub(crate) fn register_agent(&self, kind: &str) -> Result<AgentRun, Error> {
         AgentRun::create(self.clone(), kind)
     }
@@ -187,6 +193,12 @@ impl Storage {
     }
     pub(crate) fn acknowledge_agent_if_done(&self, id: i64) -> Result<(AgentStatus, bool), Error> {
         self.database.acknowledge_agent_if_done(id)
+    }
+    pub(crate) fn delete_agent(&self, id: i64) -> Result<(), Error> {
+        if id <= 0 {
+            return Err(Error::Invalid(format!("agent id {id} must be positive")));
+        }
+        self.database.delete_agent(id)
     }
     pub(crate) fn same_storage(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.database, &other.database)
