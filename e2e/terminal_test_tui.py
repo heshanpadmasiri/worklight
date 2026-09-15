@@ -54,8 +54,10 @@ class LaunchTests(PanelTestCase):
 
         session = self.panel()
 
-        for expected in ("command", "state", "exit", "elapsed", "cwd", "ack"):
+        for expected in ("agents", "processes", "command", "state", "exit", "elapsed", "cwd"):
             self.assertTrue(session.wait_for(expected), session.detail())
+        for removed in ("type", "where"):
+            self.assertNotIn(removed, session.screen())
         self.assertTrue(session.wait_for("failed/130"), session.detail())
         self.quit(session)
 

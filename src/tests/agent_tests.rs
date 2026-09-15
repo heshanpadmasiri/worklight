@@ -152,7 +152,7 @@ fn shell_and_tmux_registration_owns_independent_rows_and_ids_can_overlap() {
         shell.orchestrator().id(),
         process.orchestrator().id()
     );
-    assert_eq!(tmux.snapshot().orchestrator.describe(), "tmux %42");
+    assert_eq!(tmux.snapshot().orchestrator.kind(), "tmux");
     assert!(shell.started_at() <= std::time::SystemTime::now());
 
     let connection = Connection::open(fixture.path()).unwrap();

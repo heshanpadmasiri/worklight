@@ -89,7 +89,6 @@ impl Orchestrator {
             },
             Self::Tmux(value) => OrchestratorSnapshot::Tmux {
                 cwd: value.cwd.clone(),
-                pane: value.pane.clone(),
             },
         }
     }
@@ -105,7 +104,7 @@ impl Orchestrator {
 #[derive(Debug, Clone)]
 pub(crate) enum OrchestratorSnapshot {
     Shell { cwd: PathBuf },
-    Tmux { cwd: PathBuf, pane: String },
+    Tmux { cwd: PathBuf },
 }
 
 impl OrchestratorSnapshot {
@@ -118,12 +117,6 @@ impl OrchestratorSnapshot {
     pub(crate) fn cwd(&self) -> &Path {
         match self {
             Self::Shell { cwd } | Self::Tmux { cwd, .. } => cwd,
-        }
-    }
-    pub(crate) fn describe(&self) -> String {
-        match self {
-            Self::Shell { .. } => "shell".into(),
-            Self::Tmux { pane, .. } => format!("tmux {pane}"),
         }
     }
 }

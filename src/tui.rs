@@ -81,7 +81,8 @@ struct PanelSnapshot {
 
 struct Panel {
     snapshot: PanelSnapshot,
-    state: TableState,
+    agent_state: TableState,
+    process_state: TableState,
 }
 
 impl Panel {
@@ -96,16 +97,29 @@ impl Panel {
                 show_history: false,
                 message: None,
             },
-            state: TableState::default(),
+            agent_state: TableState::default(),
+            process_state: TableState::default(),
         }
     }
 
     fn update(&mut self, snapshot: PanelSnapshot) {
-        let selected = snapshot
-            .selected
-            .and_then(|id| snapshot.rows.iter().position(|row| row.id() == id));
+        let selected_agent = snapshot.selected.and_then(|id| {
+            snapshot
+                .rows
+                .iter()
+                .filter(|row| matches!(row, TrackedSnapshot::Agent(_)))
+                .position(|row| row.id() == id)
+        });
+        let selected_process = snapshot.selected.and_then(|id| {
+            snapshot
+                .rows
+                .iter()
+                .filter(|row| matches!(row, TrackedSnapshot::Process(_)))
+                .position(|row| row.id() == id)
+        });
         self.snapshot = snapshot;
-        self.state.select(selected);
+        self.agent_state.select(selected_agent);
+        self.process_state.select(selected_process);
     }
 
     fn selected(&self) -> Option<TrackedId> {
@@ -721,8 +735,8 @@ fn send_request(requests: &Sender<PanelRequest>, request: PanelRequest) -> Resul
 }
 
 fn viewport_rows(height: u16) -> usize {
-    // Two footer rows, two table borders, and one table header.
-    usize::from(height.saturating_sub(5))
+    // Two footer rows, plus borders and a header for each of the two tables.
+    usize::from(height.saturating_sub(8))
 }
 
 fn navigate(panel: &Panel, requests: &Sender<PanelRequest>) -> Result<(), Error> {
@@ -774,30 +788,34 @@ fn terminal_error(error: io::Error) -> Error {
 
 fn draw(frame: &mut Frame, panel: &mut Panel) {
     let areas = Layout::vertical([
-        Constraint::Min(3),
+        Constraint::Min(6),
         Constraint::Length(1),
         Constraint::Length(1),
     ])
     .split(frame.area());
 
     let now = SystemTime::now();
-    let rows: Vec<Row> = panel
+    let agent_rows: Vec<Row> = panel
         .snapshot
         .rows
         .iter()
-        .map(|tracked| match tracked {
-            TrackedSnapshot::Agent(agent) => Row::new(vec![
-                Cell::from("agent"),
+        .filter_map(|tracked| match tracked {
+            TrackedSnapshot::Agent(agent) => Some(Row::new(vec![
                 Cell::from(agent.kind.clone()),
                 Cell::from(agent.status.as_str()),
-                Cell::from("-"),
                 Cell::from(format_elapsed(agent.elapsed(now))),
-                Cell::from(agent.orchestrator.describe()),
                 Cell::from(agent.orchestrator.cwd().display().to_string()),
-                Cell::from(if agent.acknowledged { "yes" } else { "no" }),
-            ]),
-            TrackedSnapshot::Process(process) => Row::new(vec![
-                Cell::from("process"),
+            ])),
+            TrackedSnapshot::Process(_) => None,
+        })
+        .collect();
+    let process_rows: Vec<Row> = panel
+        .snapshot
+        .rows
+        .iter()
+        .filter_map(|tracked| match tracked {
+            TrackedSnapshot::Agent(_) => None,
+            TrackedSnapshot::Process(process) => Some(Row::new(vec![
                 Cell::from(process.label.clone()),
                 Cell::from(process.outcome()),
                 Cell::from(
@@ -806,36 +824,41 @@ fn draw(frame: &mut Frame, panel: &mut Panel) {
                         .map_or_else(|| "-".to_string(), |code| code.to_string()),
                 ),
                 Cell::from(format_elapsed(process.elapsed(now))),
-                Cell::from(process.orchestrator.describe()),
                 Cell::from(process.orchestrator.cwd().display().to_string()),
-                Cell::from(if process.acknowledged() { "yes" } else { "no" }),
-            ]),
+            ])),
         })
         .collect();
 
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Length(7),
-            Constraint::Min(20),
-            Constraint::Length(12),
-            Constraint::Length(4),
-            Constraint::Length(9),
-            Constraint::Length(24),
-            Constraint::Min(16),
-            Constraint::Length(4),
-        ],
-    )
-    .header(
-        Row::new(vec![
-            "type", "command", "state", "exit", "elapsed", "where", "cwd", "ack",
-        ])
-        .style(Style::default().add_modifier(Modifier::BOLD)),
-    )
-    .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-    .block(Block::default().borders(Borders::ALL).title("worklight"));
+    let table_areas = Layout::vertical([
+        Constraint::Length(agent_rows.len().saturating_add(3) as u16),
+        Constraint::Min(3),
+    ])
+    .split(areas[0]);
+    let agent_columns = [
+        Constraint::Min(20),
+        Constraint::Length(12),
+        Constraint::Length(9),
+        Constraint::Min(16),
+    ];
+    let process_columns = [
+        Constraint::Min(20),
+        Constraint::Length(12),
+        Constraint::Length(4),
+        Constraint::Length(9),
+        Constraint::Min(16),
+    ];
+    let header_style = Style::default().add_modifier(Modifier::BOLD);
+    let agents = Table::new(agent_rows, agent_columns)
+        .header(Row::new(vec!["command", "state", "elapsed", "cwd"]).style(header_style))
+        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+        .block(Block::default().borders(Borders::ALL).title("agents"));
+    let processes = Table::new(process_rows, process_columns)
+        .header(Row::new(vec!["command", "state", "exit", "elapsed", "cwd"]).style(header_style))
+        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+        .block(Block::default().borders(Borders::ALL).title("processes"));
 
-    frame.render_stateful_widget(table, areas[0], &mut panel.state);
+    frame.render_stateful_widget(agents, table_areas[0], &mut panel.agent_state);
+    frame.render_stateful_widget(processes, table_areas[1], &mut panel.process_state);
 
     let mode = if panel.snapshot.show_history {
         "all"
@@ -858,7 +881,7 @@ fn draw(frame: &mut Frame, panel: &mut Panel) {
         Some(message) => Paragraph::new(format!("error: {message}"))
             .style(Style::default().add_modifier(Modifier::BOLD)),
         None => Paragraph::new(format!(
-            "{} tracked ({mode}){loading}, showing {range}",
+            "worklight: {} tracked ({mode}){loading}, showing {range}",
             panel.snapshot.total_matching
         )),
     };
@@ -1114,6 +1137,37 @@ mod tests {
     }
 
     #[test]
+    fn agent_table_omits_the_process_exit_column() {
+        let fixture = Fixture::new();
+        let storage = fixture.storage();
+        storage
+            .create_agent("pi", Path::new("/agent"), None)
+            .unwrap();
+        storage
+            .create_process("process", Path::new("/process"), None)
+            .unwrap();
+        let mut panel_data = PanelData::load(fixture.storage(), false).unwrap();
+        panel_data.resize(20);
+
+        let mut panel = Panel::empty();
+        panel.update(panel_data.snapshot());
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &mut panel)).unwrap();
+        let rows: Vec<String> = terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(120)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect())
+            .collect();
+
+        assert!(rows[1].contains("command"));
+        assert!(!rows[1].contains("exit"));
+        assert!(rows[5].contains("exit"));
+    }
+
+    #[test]
     fn history_changes_process_rows_only_and_draw_uses_snapshots() {
         let fixture = Fixture::new();
         let storage = fixture.storage();
@@ -1152,7 +1206,10 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect::<String>();
-        assert!(rendered.contains("type"));
+        assert!(rendered.contains("agents"));
+        assert!(rendered.contains("processes"));
         assert!(rendered.contains("process"));
+        assert!(!rendered.contains("type"));
+        assert!(!rendered.contains("where"));
     }
 }

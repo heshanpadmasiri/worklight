@@ -86,9 +86,12 @@ synchronizes persisted state every five seconds. Arrows or `j`/`k` select,
 `Enter` navigates, `h` toggles acknowledged process history, and `q` or `Esc`
 quits.
 
-The shared table has a `type` column. Actionable agents are grouped above
-processes and ordered `waiting`, `idle`, `working`, then `done`, with newer
-agents first inside each status. Acknowledged `done` agents and `killed` agents
+Agents and processes are displayed in separate tables. Both show command,
+state, elapsed time, and working directory; processes additionally show exit
+status. Their box titles make a type column unnecessary. Actionable agents are
+ordered `waiting`, `idle`,
+`working`, then `done`, with newer agents first inside each status.
+Acknowledged `done` agents and `killed` agents
 are hidden. Hidden acknowledged agents remain synchronized and reappear after
 normal synchronization if the same runtime starts working again.
 

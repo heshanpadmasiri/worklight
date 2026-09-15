@@ -9,13 +9,13 @@ fn lifecycle_is_persisted_and_completion_is_immutable() {
     let storage = fixture.storage();
     let mut process = storage.start_process("build").unwrap();
     assert!(process.id() > 0);
-    let destination = process.snapshot().orchestrator.describe();
+    let destination = process.snapshot().orchestrator.cwd().to_path_buf();
 
     process.finish(7).unwrap();
     let finished = process.snapshot();
     assert_eq!(finished.exit_status(), Some(7));
     assert_eq!(finished.outcome(), "failed/7");
-    assert_eq!(finished.orchestrator.describe(), destination);
+    assert_eq!(finished.orchestrator.cwd(), destination);
     assert!(matches!(process.finish(7), Err(Error::AlreadyFinished(_))));
 
     process.acknowledge().unwrap();
