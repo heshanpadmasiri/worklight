@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from harness import WorklightTestCase  # noqa: E402
 
 ID, STATE, EXIT, ELAPSED, ACK, KIND, CWD, LABEL = range(8)
+AGENT_ID, AGENT_STATUS, AGENT_ACK, AGENT_ELAPSED, AGENT_ORCHESTRATOR, AGENT_CWD, AGENT_KIND = range(7)
 
 
 def stable(rows: list[list[str]]) -> list[list[str]]:
@@ -334,6 +335,117 @@ class DryRunTests(WorklightTestCase):
         result = self.fails("--dry-run", "finish", run_id, "0")
 
         self.assertIn("already finished", result.err)
+
+
+class AgentCliTests(WorklightTestCase):
+    def register(self, kind: str = "pi", env: dict[str, str] | None = None) -> str:
+        result = self.ok("agent", "register", kind, env=env)
+        self.assertRegex(result.out, r"^[1-9][0-9]*\n$")
+        return result.line
+
+    def status(self, agent_id: str, status: str) -> list[str]:
+        return self.ok("agent", "status", agent_id, status).rows[0]
+
+    def test_help_and_all_subcommands_parse(self) -> None:
+        self.assertIn("register", self.ok("agent", "--help").out)
+        for command in ("register", "status", "get", "list", "acknowledge", "focus"):
+            result = self.run_worklight("agent", command, "--help")
+            self.assertEqual(result.code, 0, str(result))
+
+    def test_registration_get_and_escaped_tsv(self) -> None:
+        agent_id = self.register("pi\\kind\tline\nnext")
+        row = self.ok("agent", "get", agent_id).rows[0]
+
+        self.assertEqual(len(row), 7)
+        self.assertEqual(row[AGENT_ID], agent_id)
+        self.assertEqual(row[AGENT_STATUS], "idle")
+        self.assertEqual(row[AGENT_ACK], "no")
+        self.assertEqual(row[AGENT_ORCHESTRATOR], "shell")
+        self.assertEqual(row[AGENT_KIND], r"pi\\kind\tline\nnext")
+
+    def test_status_acknowledgment_and_active_listing(self) -> None:
+        active = self.register("active")
+        done = self.register("done")
+        killed = self.register("killed")
+
+        self.status(done, "working")
+        self.status(done, "done")
+        acknowledged = self.ok("agent", "acknowledge", done).rows[0]
+        self.assertEqual(acknowledged[AGENT_ACK], "yes")
+        self.status(killed, "killed")
+
+        listed = [row[AGENT_ID] for row in self.ok("agent", "list").rows]
+        actionable = [row[AGENT_ID] for row in self.ok("agent", "list", "--active").rows]
+        self.assertEqual(set(listed), {active, done, killed})
+        self.assertEqual(actionable, [active])
+
+        working = self.status(done, "working")
+        self.assertEqual((working[AGENT_STATUS], working[AGENT_ACK]), ("working", "no"))
+
+    def test_invalid_ids_statuses_and_transitions_do_not_write(self) -> None:
+        agent_id = self.register()
+        for invalid in ("0", "-1"):
+            self.assertIn("must be positive", self.fails("agent", "get", invalid).err)
+        self.assertIn("unknown agent status", self.fails("agent", "status", agent_id, "IDLE").err)
+        self.assertIn("cannot transition", self.fails("agent", "status", agent_id, "done").err)
+        self.assertEqual(self.ok("agent", "get", agent_id).rows[0][AGENT_STATUS], "idle")
+        self.assertIn("not done", self.fails("agent", "acknowledge", agent_id).err)
+
+    def test_dry_run_registration_creates_nothing(self) -> None:
+        result = self.ok("--dry-run", "agent", "register", "pi")
+        self.assertEqual(result.out, "0\n")
+        self.assertFalse(self.db.exists())
+        self.assertFalse(self.db.parent.exists())
+
+    def test_dry_run_mutations_validate_and_write_nothing(self) -> None:
+        agent_id = self.register()
+        before = self.ok("agent", "get", agent_id).rows[0]
+
+        preview = self.ok("--dry-run", "agent", "status", agent_id, "working").rows[0]
+        self.assertEqual(preview[AGENT_STATUS], "idle")
+        self.assertEqual(self.ok("agent", "get", agent_id).rows[0][AGENT_STATUS], "idle")
+        self.assertIn(
+            "cannot transition",
+            self.fails("--dry-run", "agent", "status", agent_id, "done").err,
+        )
+        self.assertIn("not done", self.fails("--dry-run", "agent", "acknowledge", agent_id).err)
+        focused = self.ok("--dry-run", "agent", "focus", agent_id)
+        self.assertIn("shell", focused.rows[0][0])
+        after = self.ok("agent", "get", agent_id).rows[0]
+        self.assertEqual(before[:AGENT_ELAPSED], after[:AGENT_ELAPSED])
+        self.assertEqual(before[AGENT_ELAPSED + 1 :], after[AGENT_ELAPSED + 1 :])
+
+    def test_focus_failure_does_not_acknowledge_done(self) -> None:
+        agent_id = self.register()
+        self.status(agent_id, "working")
+        self.status(agent_id, "done")
+        self.assertIn("unavailable", self.fails("agent", "focus", agent_id).err)
+        self.assertEqual(self.ok("agent", "get", agent_id).rows[0][AGENT_ACK], "no")
+
+    def test_successful_focus_conditionally_acknowledges_done(self) -> None:
+        fake_bin = self.root / "fake-bin"
+        fake_bin.mkdir()
+        tmux = fake_bin / "tmux"
+        tmux.write_text(
+            "#!/bin/sh\n"
+            "if [ \"$1\" = list-panes ]; then printf '%s\\t%s\\n' '%42' 'work:1.0'; fi\n"
+        )
+        tmux.chmod(0o755)
+        env = {
+            "PATH": f"{fake_bin}:{self.env['PATH']}",
+            "TMUX": "fake,1,0",
+            "TMUX_PANE": "%42",
+        }
+        agent_id = self.register(env=env)
+        self.status(agent_id, "working")
+        self.status(agent_id, "done")
+
+        focused = self.ok("agent", "focus", agent_id, env=env)
+
+        self.assertEqual(focused.rows[0][0], "work:1.0")
+        self.assertEqual(focused.rows[0][1 + AGENT_STATUS], "done")
+        self.assertEqual(focused.rows[0][1 + AGENT_ACK], "yes")
+        self.assertEqual(self.ok("agent", "get", agent_id).rows[0][AGENT_ACK], "yes")
 
 
 class DatabaseTests(WorklightTestCase):

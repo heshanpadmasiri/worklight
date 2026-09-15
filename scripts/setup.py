@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import difflib
+import json
 import os
 import shlex
 import shutil
@@ -46,6 +47,32 @@ def config_dir(env: dict[str, str]) -> Path:
     if base:
         return Path(base).expanduser() / "worklight"
     return Path(env.get("HOME", "~")).expanduser() / ".config" / "worklight"
+
+
+def pi_agent_dir(env: dict[str, str]) -> Path:
+    override = env.get("PI_CODING_AGENT_DIR")
+    if override:
+        return Path(override).expanduser()
+    return Path(env.get("HOME", "~")).expanduser() / ".pi" / "agent"
+
+
+def pi_extension_path(env: dict[str, str]) -> Path:
+    return pi_agent_dir(env) / "extensions" / "worklight" / "index.ts"
+
+
+def pi_extension_source() -> Path:
+    return CHECKOUT / "agents" / "pi" / "index.ts"
+
+
+def pi_extension_contents(binary: Path) -> str:
+    placeholder = '"__WORKLIGHT_BINARY__"'
+    source = pi_extension_source().read_text()
+    if source.count(placeholder) != 1:
+        raise SetupError(
+            f"{pi_extension_source()} must contain exactly one Worklight binary placeholder"
+        )
+    absolute_binary = binary.expanduser().resolve()
+    return source.replace(placeholder, json.dumps(str(absolute_binary)))
 
 
 def zshrc_path(env: dict[str, str], override: str | None) -> Path:
@@ -304,6 +331,10 @@ def plan(args: argparse.Namespace, env: dict[str, str]) -> list[Change]:
                 tmux_conf,
             ),
         ),
+        Change(
+            pi_extension_path(env),
+            pi_extension_contents(bin_dir / "worklight"),
+        ),
     ]
 
 
@@ -452,6 +483,8 @@ def main(argv: list[str] | None = None) -> int:
         for change in applied
     ):
         print("  tmux: re-run with --reload-tmux to load the binding into a running server")
+    print("  Pi: new processes load the Worklight extension automatically")
+    print("  Pi: run /reload in an existing process to load the extension")
     return 0
 
 

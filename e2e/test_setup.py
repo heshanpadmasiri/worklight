@@ -7,6 +7,8 @@ configuration, tmux configuration and installed binaries are never touched.
 
 from __future__ import annotations
 
+import importlib.util
+import json
 import os
 import shlex
 import shutil
@@ -19,6 +21,11 @@ from pathlib import Path
 CHECKOUT = Path(__file__).resolve().parent.parent
 SETUP = CHECKOUT / "scripts" / "setup.py"
 TIMEOUT = 600
+
+_SETUP_SPEC = importlib.util.spec_from_file_location("worklight_setup", SETUP)
+assert _SETUP_SPEC is not None and _SETUP_SPEC.loader is not None
+setup_module = importlib.util.module_from_spec(_SETUP_SPEC)
+_SETUP_SPEC.loader.exec_module(setup_module)
 
 
 class SetupTestCase(unittest.TestCase):
@@ -47,6 +54,10 @@ class SetupTestCase(unittest.TestCase):
         self.zshrc = self.home / ".zshrc"
         self.tmux_conf = self.home / ".config" / "tmux" / "tmux.conf"
         self.binary = self.cargo_home / "bin" / "worklight"
+        self.pi_agent_dir = self.home / ".pi" / "agent"
+        self.pi_extension = (
+            self.pi_agent_dir / "extensions" / "worklight" / "index.ts"
+        )
 
     def setup(
         self,
@@ -77,6 +88,7 @@ class SetupTestCase(unittest.TestCase):
     def assertUntouched(self) -> None:
         self.assertFalse(self.config.exists(), "config directory was created")
         self.assertFalse(self.binary.exists(), "binary was installed")
+        self.assertFalse(self.pi_agent_dir.exists(), "Pi agent directory was created")
 
 
 class PreviewTests(SetupTestCase):
@@ -85,6 +97,7 @@ class PreviewTests(SetupTestCase):
 
         self.assertEqual(result.returncode, 0, self.detail(result))
         self.assertIn("integrations.zsh", result.stdout)
+        self.assertIn(str(self.pi_extension), result.stdout)
         self.assertIn("dry run", result.stdout)
         self.assertUntouched()
 
@@ -210,6 +223,36 @@ class ConfigurationTests(SetupTestCase):
         self.assertIn(str(custom_zshrc), result.stdout)
         self.assertIn(str(custom_tmux), result.stdout)
 
+    def test_pi_agent_directory_override_is_honored(self) -> None:
+        custom_pi = self.root / "custom-pi"
+
+        result = self.setup(
+            "--dry-run", env={"PI_CODING_AGENT_DIR": str(custom_pi)}
+        )
+
+        self.assertEqual(result.returncode, 0, self.detail(result))
+        self.assertIn(
+            str(custom_pi / "extensions" / "worklight" / "index.ts"),
+            result.stdout,
+        )
+        self.assertNotIn(str(self.pi_extension), result.stdout)
+        self.assertFalse(custom_pi.exists())
+
+    def test_empty_pi_agent_directory_override_uses_home_default(self) -> None:
+        result = self.setup("--dry-run", env={"PI_CODING_AGENT_DIR": ""})
+
+        self.assertEqual(result.returncode, 0, self.detail(result))
+        self.assertIn(str(self.pi_extension), result.stdout)
+
+    def test_extension_binary_path_is_typescript_safe(self) -> None:
+        unusual = self.root / 'cargo "quoted" \\ path\nnext' / "bin" / "worklight"
+
+        contents = setup_module.pi_extension_contents(unusual)
+        rendered = json.dumps(str(unusual.resolve()))
+
+        self.assertIn(f"const WORKLIGHT_BINARY = {rendered};", contents)
+        self.assertNotIn('"__WORKLIGHT_BINARY__"', contents)
+
 
 class InstallationTests(SetupTestCase):
     def test_setup_installs_the_binary_and_writes_the_integrations(self) -> None:
@@ -240,6 +283,15 @@ class InstallationTests(SetupTestCase):
         self.assertIn("_worklight_hook_precmd", zsh_integration)
         self.assertIn("typeset -g _worklight_hook_pending_id", zsh_integration)
         self.assertIn(shlex.quote(str(self.binary)), zsh_integration)
+        extension = self.pi_extension.read_text()
+        self.assertIn(
+            f"const WORKLIGHT_BINARY = {json.dumps(str(self.binary.resolve()))};",
+            extension,
+        )
+        self.assertNotIn("__WORKLIGHT_BINARY__", extension)
+        self.assertFalse((self.pi_agent_dir / "settings.json").exists())
+        self.assertIn("new processes load", result.stdout)
+        self.assertIn("/reload", result.stdout)
 
     def test_rerunning_changes_nothing_and_writes_no_backup(self) -> None:
         self.assertEqual(self.setup("-y").returncode, 0)
@@ -251,15 +303,19 @@ class InstallationTests(SetupTestCase):
         self.assertIn("already up to date", result.stdout)
         self.assertEqual(self.zshrc.read_text(), before)
         self.assertEqual(list(self.home.glob(".zshrc.worklight-*.bak")), [])
+        self.assertEqual(
+            list(self.pi_extension.parent.glob("index.ts.worklight-*.bak")), []
+        )
 
     def test_an_update_backs_up_and_preserves_unrelated_content(self) -> None:
         self.zshrc.write_text("export EDITOR=vi\n")
         self.assertEqual(self.setup("-y").returncode, 0)
-        # A stale block, as an older version would have written.
+        # Stale files, as an older version would have written.
         self.zshrc.write_text(
             "export EDITOR=vi\n# >>> worklight >>>\nsource /old/path\n# <<< worklight <<<\n"
             "alias ll='ls -l'\n"
         )
+        self.pi_extension.write_text("// stale extension\n")
 
         result = self.setup("-y")
 
@@ -269,6 +325,12 @@ class InstallationTests(SetupTestCase):
         self.assertIn("alias ll='ls -l'", zshrc)
         self.assertNotIn("/old/path", zshrc)
         self.assertTrue(list(self.home.glob(".zshrc.worklight-*.bak")))
+        extension_backups = list(
+            self.pi_extension.parent.glob("index.ts.worklight-*.bak")
+        )
+        self.assertEqual(len(extension_backups), 1)
+        self.assertEqual(extension_backups[0].read_text(), "// stale extension\n")
+        self.assertIn(str(self.binary.resolve()), self.pi_extension.read_text())
 
     def test_a_requested_tmux_reload_failure_returns_nonzero(self) -> None:
         missing_socket = self.root / "missing-tmux.sock"

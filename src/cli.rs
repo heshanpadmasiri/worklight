@@ -3,8 +3,9 @@ use std::time::SystemTime;
 
 use clap::{Parser, Subcommand};
 
+use crate::agent::{AgentSnapshot, AgentStatus};
 use crate::error::Error;
-use crate::orchestrator::{Environment, SystemEnvironment};
+use crate::orchestrator::{self, Environment, SystemEnvironment};
 use crate::process::{ProcessSnapshot, ProcessState};
 use crate::storage::Storage;
 use crate::tui;
@@ -185,7 +186,41 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         navigation_args: Vec<String>,
     },
+    Agent {
+        #[command(subcommand)]
+        command: AgentCommand,
+    },
     Panel,
+}
+
+#[derive(Subcommand, Debug)]
+enum AgentCommand {
+    Register {
+        kind: String,
+    },
+    Status {
+        #[arg(allow_hyphen_values = true)]
+        id: i64,
+        status: String,
+    },
+    Get {
+        #[arg(allow_hyphen_values = true)]
+        id: i64,
+    },
+    List {
+        #[arg(long)]
+        active: bool,
+    },
+    Acknowledge {
+        #[arg(allow_hyphen_values = true)]
+        id: i64,
+    },
+    Focus {
+        #[arg(allow_hyphen_values = true)]
+        id: i64,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        navigation_args: Vec<String>,
+    },
 }
 
 pub(crate) fn run() -> Result<(), Error> {
@@ -217,7 +252,18 @@ fn positive(id: i64) -> Result<i64, Error> {
         Err(Error::Invalid(format!("process id {id} must be positive")))
     }
 }
+fn positive_agent(id: i64) -> Result<i64, Error> {
+    if id > 0 {
+        Ok(id)
+    } else {
+        Err(Error::Invalid(format!("agent id {id} must be positive")))
+    }
+}
 fn dispatch(command: Command, storage: &Storage, dry_run: bool) -> Result<(), Error> {
+    let command = match command {
+        Command::Agent { command } => return dispatch_agent(command, storage, dry_run),
+        command => command,
+    };
     if dry_run {
         return preview(&command, storage);
     }
@@ -261,10 +307,109 @@ fn dispatch(command: Command, storage: &Storage, dry_run: bool) -> Result<(), Er
                 format_row(&process.snapshot())
             );
         }
-        Command::Panel => unreachable!(),
+        Command::Agent { .. } | Command::Panel => unreachable!(),
     }
     Ok(())
 }
+
+fn dispatch_agent(command: AgentCommand, storage: &Storage, dry_run: bool) -> Result<(), Error> {
+    match command {
+        AgentCommand::Register { kind } => {
+            if dry_run {
+                if kind.trim().is_empty() {
+                    return Err(Error::Invalid("agent kind is empty".into()));
+                }
+                orchestrator::detect(&SystemEnvironment).map_err(Error::Environment)?;
+                println!("0");
+            } else {
+                println!("{}", storage.register_agent(&kind)?.id());
+            }
+        }
+        AgentCommand::Status { id, status } => {
+            let id = positive_agent(id)?;
+            let requested = AgentStatus::parse(&status)?;
+            let mut agent = storage.get_agent(id)?;
+            if dry_run {
+                let current = agent.status()?;
+                if !current.permits(requested) {
+                    return Err(Error::InvalidAgentTransition {
+                        id,
+                        from: current,
+                        to: requested,
+                    });
+                }
+            } else {
+                agent.set_status(requested)?;
+            }
+            println!("{}", format_agent_row(&agent.snapshot()));
+        }
+        AgentCommand::Get { id } => println!(
+            "{}",
+            format_agent_row(&storage.get_agent(positive_agent(id)?)?.snapshot())
+        ),
+        AgentCommand::List { active } => {
+            for agent in if active {
+                storage.active_agent()?
+            } else {
+                storage.all_agent()?
+            } {
+                println!("{}", format_agent_row(&agent.snapshot()));
+            }
+        }
+        AgentCommand::Acknowledge { id } => {
+            let id = positive_agent(id)?;
+            let mut agent = storage.get_agent(id)?;
+            if dry_run {
+                if agent.status()? != AgentStatus::Done {
+                    return Err(Error::AgentNotDone(id));
+                }
+            } else {
+                agent.acknowledge()?;
+            }
+            println!("{}", format_agent_row(&agent.snapshot()));
+        }
+        AgentCommand::Focus {
+            id,
+            navigation_args,
+        } => {
+            let id = positive_agent(id)?;
+            let mut agent = storage.get_agent(id)?;
+            let target = if dry_run {
+                validate_navigation_args(agent.orchestrator().kind(), &navigation_args)?;
+                agent.status()?;
+                format!(
+                    "{} ({})",
+                    agent.orchestrator().describe(),
+                    agent.orchestrator().cwd().display()
+                )
+            } else {
+                agent.focus(&navigation_args)?
+            };
+            println!(
+                "{}\t{}",
+                escape_field(&target),
+                format_agent_row(&agent.snapshot())
+            );
+        }
+    }
+    Ok(())
+}
+
+fn validate_navigation_args(kind: &str, navigation_args: &[String]) -> Result<(), Error> {
+    if kind != "tmux" {
+        return Ok(());
+    }
+    match navigation_args {
+        [] => Ok(()),
+        [option, client] if option == "--client" && !client.is_empty() => Ok(()),
+        [option] if option.starts_with("--client=") && option.len() > 9 => Ok(()),
+        _ => Err(Error::Invalid(format!(
+            "unsupported tmux navigation arguments: {}",
+            navigation_args.join(" ")
+        ))),
+    }
+}
+
 fn preview(command: &Command, storage: &Storage) -> Result<(), Error> {
     match command {
         Command::Start { .. } => unreachable!("start previews return before opening storage"),
@@ -308,19 +453,7 @@ fn preview(command: &Command, storage: &Storage) -> Result<(), Error> {
             let mut process = storage.get_process(positive(*id)?)?;
             // Validate arguments without invoking tmux: shell ignores them, tmux
             // accepts only the documented client forms.
-            if process.orchestrator().kind() == "tmux" {
-                match navigation_args.as_slice() {
-                    [] => {}
-                    [a, b] if a == "--client" && !b.is_empty() => {}
-                    [a] if a.starts_with("--client=") && a.len() > 9 => {}
-                    _ => {
-                        return Err(Error::Invalid(format!(
-                            "unsupported tmux navigation arguments: {}",
-                            navigation_args.join(" ")
-                        )))
-                    }
-                }
-            }
+            validate_navigation_args(process.orchestrator().kind(), navigation_args)?;
             process.state()?;
             let destination = format!(
                 "{} ({})",
@@ -333,10 +466,11 @@ fn preview(command: &Command, storage: &Storage) -> Result<(), Error> {
                 format_row(&process.snapshot())
             );
         }
-        Command::Panel => unreachable!(),
+        Command::Agent { .. } | Command::Panel => unreachable!(),
     }
     Ok(())
 }
+
 pub(crate) fn format_row(process: &ProcessSnapshot) -> String {
     format!(
         "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
@@ -352,6 +486,19 @@ pub(crate) fn format_row(process: &ProcessSnapshot) -> String {
         escape_field(&process.label)
     )
 }
+pub(crate) fn format_agent_row(agent: &AgentSnapshot) -> String {
+    format!(
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        agent.id,
+        agent.status.as_str(),
+        if agent.acknowledged { "yes" } else { "no" },
+        agent.elapsed(SystemTime::now()).as_millis(),
+        agent.orchestrator.kind(),
+        escape_field(&agent.orchestrator.cwd().display().to_string()),
+        escape_field(&agent.kind)
+    )
+}
+
 fn escape_field(value: &str) -> String {
     value
         .replace('\\', "\\\\")

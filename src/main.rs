@@ -1,5 +1,6 @@
 //! Worklight: manual tracking of user-started commands.
 
+mod agent;
 mod cli;
 mod error;
 mod orchestrator;

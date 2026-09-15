@@ -1,3 +1,4 @@
+use crate::agent::AgentStatus;
 use crate::orchestrator::NavigationError;
 
 #[derive(Debug)]
@@ -10,6 +11,14 @@ pub(crate) enum Error {
     AlreadyAcknowledged(i64),
     StillRunning(i64),
     WrongStorage(i64),
+    AgentNotFound(i64),
+    InvalidAgentTransition {
+        id: i64,
+        from: AgentStatus,
+        to: AgentStatus,
+    },
+    AgentNotDone(i64),
+    AgentWrongStorage(i64),
     ReadOnly,
     CorruptData(String),
     Busy(String),
@@ -27,6 +36,15 @@ impl std::fmt::Display for Error {
             Self::AlreadyAcknowledged(id) => write!(f, "process {id} is already acknowledged"),
             Self::StillRunning(id) => write!(f, "process {id} is still running"),
             Self::WrongStorage(id) => write!(f, "process {id} belongs to different storage"),
+            Self::AgentNotFound(id) => write!(f, "no agent with id {id}"),
+            Self::InvalidAgentTransition { id, from, to } => write!(
+                f,
+                "agent {id} cannot transition from {} to {}",
+                from.as_str(),
+                to.as_str()
+            ),
+            Self::AgentNotDone(id) => write!(f, "agent {id} is not done"),
+            Self::AgentWrongStorage(id) => write!(f, "agent {id} belongs to different storage"),
             Self::ReadOnly => f.write_str("storage is read-only"),
             Self::CorruptData(message) => write!(f, "corrupt data: {message}"),
             Self::Busy(message) => write!(f, "storage unavailable: {message}"),
