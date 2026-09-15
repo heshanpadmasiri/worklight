@@ -136,6 +136,42 @@ event. Shutdown waits at most 12 seconds for queued updates and cleanup. A
 crash, forced termination, command failure, or timeout can therefore leave a
 stale agent; Worklight performs no heartbeat, PID polling, or stale-row cleanup.
 
+## Claude Code integration
+
+Setup installs a dependency-free hook script and registers it in the Claude Code
+settings file, representing each Claude Code session as one Worklight agent. It
+maps Claude Code hook events as follows:
+
+- session start registers an `idle` agent;
+- a submitted prompt reports `working`;
+- a blocking prompt — a permission request or an elicitation dialog — reports
+  `waiting`, but only while the agent is `working`, so the idle and quota
+  notifications that arrive after a turn are ignored;
+- the next completed tool call reports `working` again, because Claude Code
+  emits no permission-granted event;
+- the end of a turn reports `working` then `done` (the repeated `working`
+  repairs missed updates and closes a waiting span that a denied permission
+  would otherwise leave open);
+- session end reports terminal `killed`.
+
+Compaction continues the same session, so its agent is kept. Every other start —
+startup, `/clear`, `--resume`, and `/branch` — retires the agent the session
+recorded and registers a new ID. Subagents are part of one main-agent run and
+report nothing of their own.
+
+Because each hook is a separate process, the Worklight ID lives in a state file
+per session under `${XDG_STATE_HOME}/worklight/claude`, or
+`${HOME}/.local/state/worklight/claude`. A status equal to the recorded one is
+never sent, so the hook on tool completion usually runs no command at all. The
+file is removed at session end, and files older than seven days are pruned at
+session start.
+
+Tracking is best effort: the hook always exits zero, never writes to standard
+output, and records failures in `hook.log` beside the state files. A status that
+fails to report is retried by the next event that wants it. A crash, forced
+termination, or command failure can leave a stale agent; Worklight performs no
+heartbeat, PID polling, or stale-row cleanup.
+
 ## Install and set up
 
     mise run setup            # show planned diffs, then ask
@@ -163,6 +199,21 @@ It embeds the absolute Cargo-installed Worklight binary path, so Pi does not
 depend on a newly changed shell `PATH`. Setup does not edit Pi settings or
 reload Pi. New Pi processes auto-discover the extension; run `/reload` in an
 existing Pi process after setup.
+
+The rendered Claude Code hook is installed at:
+
+    ${CLAUDE_CONFIG_DIR}/worklight/hook.py
+
+when `CLAUDE_CONFIG_DIR` is nonempty, or otherwise at
+`${HOME}/.claude/worklight/hook.py`. It embeds the same absolute binary path and
+is run as `/usr/bin/env python3`, so it needs no executable bit. Setup registers
+it in `settings.json` beside it, replacing only the hook entries that name this
+script and preserving every other setting and hook. JSON has no marked-block
+equivalent, so that file is re-serialized rather than edited in place: the full
+diff is shown before anything is written, a backup is kept, and a second run
+produces identical text. A settings file that is not valid JSON, or whose hook
+configuration has an unexpected shape, is reported rather than overwritten.
+Start a new Claude Code session after setup.
 
 Every generated file, including the Pi extension, participates in setup's
 diff, confirmation, dry-run, backup, idempotency, and partial-failure behavior.
@@ -193,10 +244,13 @@ Older, unknown, and nonempty versionless schemas remain incompatible.
 Every end-to-end Python file is directly runnable and owns temporary HOME,
 configuration, and database paths. The Pi harness renders the setup-time binary
 placeholder into a temporary extension and drives it through a fake extension
-API.
+API. The Claude Code tests render the same placeholder into a temporary hook and
+run it once per event, as Claude Code does, against a stub binary that records
+the commands it was asked to run.
 
 ## Layout
 
+    agents/claude/hook.py    Claude Code lifecycle hook source template
     agents/pi/index.ts       Pi lifecycle extension source template
     scripts/setup.py         binary and integration installer
     src/agent.rs             harness-neutral tracked agent runtime

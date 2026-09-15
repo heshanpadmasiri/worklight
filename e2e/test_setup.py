@@ -58,6 +58,9 @@ class SetupTestCase(unittest.TestCase):
         self.pi_extension = (
             self.pi_agent_dir / "extensions" / "worklight" / "index.ts"
         )
+        self.claude_dir = self.home / ".claude"
+        self.claude_hook = self.claude_dir / "worklight" / "hook.py"
+        self.claude_settings = self.claude_dir / "settings.json"
 
     def setup(
         self,
@@ -89,6 +92,7 @@ class SetupTestCase(unittest.TestCase):
         self.assertFalse(self.config.exists(), "config directory was created")
         self.assertFalse(self.binary.exists(), "binary was installed")
         self.assertFalse(self.pi_agent_dir.exists(), "Pi agent directory was created")
+        self.assertFalse(self.claude_dir.exists(), "Claude Code directory was created")
 
 
 class PreviewTests(SetupTestCase):
@@ -98,6 +102,8 @@ class PreviewTests(SetupTestCase):
         self.assertEqual(result.returncode, 0, self.detail(result))
         self.assertIn("integrations.zsh", result.stdout)
         self.assertIn(str(self.pi_extension), result.stdout)
+        self.assertIn(str(self.claude_hook), result.stdout)
+        self.assertIn(str(self.claude_settings), result.stdout)
         self.assertIn("dry run", result.stdout)
         self.assertUntouched()
 
@@ -244,6 +250,98 @@ class ConfigurationTests(SetupTestCase):
         self.assertEqual(result.returncode, 0, self.detail(result))
         self.assertIn(str(self.pi_extension), result.stdout)
 
+    def test_claude_configuration_directory_override_is_honored(self) -> None:
+        custom = self.root / "custom-claude"
+
+        result = self.setup("--dry-run", env={"CLAUDE_CONFIG_DIR": str(custom)})
+
+        self.assertEqual(result.returncode, 0, self.detail(result))
+        self.assertIn(str(custom / "worklight" / "hook.py"), result.stdout)
+        self.assertIn(str(custom / "settings.json"), result.stdout)
+        self.assertNotIn(str(self.claude_hook), result.stdout)
+        self.assertFalse(custom.exists())
+
+    def test_empty_claude_configuration_override_uses_home_default(self) -> None:
+        result = self.setup("--dry-run", env={"CLAUDE_CONFIG_DIR": ""})
+
+        self.assertEqual(result.returncode, 0, self.detail(result))
+        self.assertIn(str(self.claude_hook), result.stdout)
+
+    def test_unparsable_claude_settings_are_reported(self) -> None:
+        self.claude_settings.parent.mkdir(parents=True)
+        self.claude_settings.write_text("{ not json\n")
+
+        result = self.setup("--dry-run")
+
+        self.assertEqual(result.returncode, 1, self.detail(result))
+        self.assertIn("fix it by hand", result.stderr)
+
+    def test_claude_settings_merge_preserves_unrelated_configuration(self) -> None:
+        hook = Path("/home/user/.claude/worklight/hook.py")
+        settings = Path("/home/user/.claude/settings.json")
+        existing = json.dumps(
+            {
+                "model": "opus",
+                "hooks": {
+                    "Stop": [
+                        {"hooks": [{"type": "command", "command": "notify-send done"}]},
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": f"/usr/bin/env python3 {hook} Stop",
+                                    "timeout": 10,
+                                }
+                            ]
+                        },
+                    ],
+                    "PreToolUse": [
+                        {"matcher": "Bash", "hooks": [{"type": "command", "command": "guard.sh"}]}
+                    ],
+                },
+            }
+        )
+
+        merged = setup_module.claude_settings_contents(existing, hook, settings)
+        parsed = json.loads(merged)
+
+        self.assertEqual(parsed["model"], "opus")
+        self.assertEqual(
+            parsed["hooks"]["PreToolUse"],
+            [{"matcher": "Bash", "hooks": [{"type": "command", "command": "guard.sh"}]}],
+        )
+        # The unrelated Stop hook survives; the stale worklight one is replaced
+        # rather than duplicated.
+        stop = parsed["hooks"]["Stop"]
+        self.assertEqual(len(stop), 2)
+        self.assertEqual(stop[0]["hooks"][0]["command"], "notify-send done")
+        self.assertIn(str(hook), stop[1]["hooks"][0]["command"])
+        # Re-running produces identical text, so setup reports no change.
+        self.assertEqual(
+            merged, setup_module.claude_settings_contents(merged, hook, settings)
+        )
+
+    def test_claude_settings_merge_keeps_text_as_written(self) -> None:
+        hook = Path("/home/user/.claude/worklight/hook.py")
+        settings = Path("/home/user/.claude/settings.json")
+        existing = '{\n  "note": "an em dash \u2014 stays literal",\n  "hooks": {}\n}\n'
+
+        merged = setup_module.claude_settings_contents(existing, hook, settings)
+
+        self.assertIn("an em dash \u2014 stays literal", merged)
+        self.assertNotIn("\\u2014", merged)
+        # Only the hooks key changes; nothing else is rewritten.
+        self.assertIn('"note": "an em dash \u2014 stays literal",', merged)
+
+    def test_claude_hook_binary_path_is_python_safe(self) -> None:
+        unusual = self.root / 'cargo "quoted" \\ path\nnext' / "bin" / "worklight"
+
+        contents = setup_module.claude_hook_contents(unusual)
+        rendered = json.dumps(str(unusual.resolve()))
+
+        self.assertIn(f"WORKLIGHT_BINARY = {rendered}", contents)
+        self.assertNotIn('"__WORKLIGHT_BINARY__"', contents)
+
     def test_extension_binary_path_is_typescript_safe(self) -> None:
         unusual = self.root / 'cargo "quoted" \\ path\nnext' / "bin" / "worklight"
 
@@ -290,8 +388,29 @@ class InstallationTests(SetupTestCase):
         )
         self.assertNotIn("__WORKLIGHT_BINARY__", extension)
         self.assertFalse((self.pi_agent_dir / "settings.json").exists())
+        hook = self.claude_hook.read_text()
+        self.assertIn(f"WORKLIGHT_BINARY = {json.dumps(str(self.binary.resolve()))}", hook)
+        self.assertNotIn("__WORKLIGHT_BINARY__", hook)
+        settings = json.loads(self.claude_settings.read_text())
+        self.assertEqual(
+            sorted(settings["hooks"]),
+            [
+                "Notification",
+                "PostToolUse",
+                "SessionEnd",
+                "SessionStart",
+                "Stop",
+                "UserPromptSubmit",
+            ],
+        )
+        for groups in settings["hooks"].values():
+            entry = groups[-1]["hooks"][0]
+            self.assertEqual(entry["type"], "command")
+            self.assertEqual(entry["timeout"], 10)
+            self.assertIn(shlex.quote(str(self.claude_hook)), entry["command"])
         self.assertIn("new processes load", result.stdout)
         self.assertIn("/reload", result.stdout)
+        self.assertIn("Claude Code", result.stdout)
 
     def test_rerunning_changes_nothing_and_writes_no_backup(self) -> None:
         self.assertEqual(self.setup("-y").returncode, 0)
@@ -306,6 +425,12 @@ class InstallationTests(SetupTestCase):
         self.assertEqual(
             list(self.pi_extension.parent.glob("index.ts.worklight-*.bak")), []
         )
+        self.assertEqual(
+            list(self.claude_hook.parent.glob("hook.py.worklight-*.bak")), []
+        )
+        self.assertEqual(
+            list(self.claude_dir.glob("settings.json.worklight-*.bak")), []
+        )
 
     def test_an_update_backs_up_and_preserves_unrelated_content(self) -> None:
         self.zshrc.write_text("export EDITOR=vi\n")
@@ -316,6 +441,13 @@ class InstallationTests(SetupTestCase):
             "alias ll='ls -l'\n"
         )
         self.pi_extension.write_text("// stale extension\n")
+        self.claude_hook.write_text("# stale hook\n")
+        stale_settings = json.loads(self.claude_settings.read_text())
+        stale_settings["hooks"]["Stop"] = [
+            {"hooks": [{"type": "command", "command": f"python3 {self.claude_hook} Stop"}]}
+        ]
+        stale_settings["editorMode"] = "vim"
+        self.claude_settings.write_text(json.dumps(stale_settings, indent=2) + "\n")
 
         result = self.setup("-y")
 
@@ -331,6 +463,14 @@ class InstallationTests(SetupTestCase):
         self.assertEqual(len(extension_backups), 1)
         self.assertEqual(extension_backups[0].read_text(), "// stale extension\n")
         self.assertIn(str(self.binary.resolve()), self.pi_extension.read_text())
+        self.assertIn(str(self.binary.resolve()), self.claude_hook.read_text())
+        self.assertEqual(
+            len(list(self.claude_hook.parent.glob("hook.py.worklight-*.bak"))), 1
+        )
+        settings = json.loads(self.claude_settings.read_text())
+        # An unrelated setting survives and the stale hook entry is not doubled.
+        self.assertEqual(settings["editorMode"], "vim")
+        self.assertEqual(len(settings["hooks"]["Stop"]), 1)
 
     def test_a_requested_tmux_reload_failure_returns_nonzero(self) -> None:
         missing_socket = self.root / "missing-tmux.sock"

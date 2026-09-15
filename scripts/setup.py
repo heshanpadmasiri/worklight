@@ -75,6 +75,123 @@ def pi_extension_contents(binary: Path) -> str:
     return source.replace(placeholder, json.dumps(str(absolute_binary)))
 
 
+def claude_config_dir(env: dict[str, str]) -> Path:
+    override = env.get("CLAUDE_CONFIG_DIR")
+    if override:
+        return Path(override).expanduser()
+    return Path(env.get("HOME", "~")).expanduser() / ".claude"
+
+
+def claude_hook_path(env: dict[str, str]) -> Path:
+    return claude_config_dir(env) / "worklight" / "hook.py"
+
+
+def claude_settings_path(env: dict[str, str]) -> Path:
+    return claude_config_dir(env) / "settings.json"
+
+
+def claude_hook_source() -> Path:
+    return CHECKOUT / "agents" / "claude" / "hook.py"
+
+
+def claude_hook_contents(binary: Path) -> str:
+    placeholder = '"__WORKLIGHT_BINARY__"'
+    source = claude_hook_source().read_text()
+    if source.count(placeholder) != 1:
+        raise SetupError(
+            f"{claude_hook_source()} must contain exactly one Worklight binary placeholder"
+        )
+    absolute_binary = binary.expanduser().resolve()
+    return source.replace(placeholder, json.dumps(str(absolute_binary)))
+
+
+# Claude Code hook events, each with the matcher that selects the occasions
+# worth reporting. `None` means every occasion of that event.
+CLAUDE_HOOK_EVENTS: tuple[tuple[str, str | None], ...] = (
+    ("SessionStart", "startup|resume|clear|compact|fork"),
+    ("UserPromptSubmit", None),
+    (
+        "Notification",
+        "permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input",
+    ),
+    ("PostToolUse", "*"),
+    ("Stop", None),
+    ("SessionEnd", None),
+)
+
+
+def claude_hook_command(hook_path: Path, event: str) -> str:
+    # `/usr/bin/env python3` rather than a shebang: the generated file is written
+    # as ordinary text, without an executable bit.
+    return f"/usr/bin/env python3 {shlex.quote(str(hook_path))} {event}"
+
+
+def claude_settings_contents(existing: str, hook_path: Path, path: Path) -> str:
+    """Replace worklight's hook entries, preserving every other setting.
+
+    JSON has no marked-block equivalent, so the whole file is re-serialized.
+    Nothing is dropped, the diff is shown before anything is written, and a
+    second run produces identical text.
+    """
+    if existing.strip():
+        try:
+            settings = json.loads(existing)
+        except ValueError as error:
+            raise SetupError(
+                f"cannot parse {path} as JSON ({error}); fix it by hand first"
+            ) from error
+    else:
+        settings = {}
+    if not isinstance(settings, dict):
+        raise SetupError(f"{path} does not hold a JSON object; fix it by hand first")
+
+    hooks = settings.get("hooks", {})
+    if not isinstance(hooks, dict):
+        raise SetupError(f'{path} has a "hooks" value that is not an object; fix it by hand first')
+    hooks = dict(hooks)
+    marker = str(hook_path)
+
+    def ours(entry: object) -> bool:
+        return isinstance(entry, dict) and marker in str(entry.get("command", ""))
+
+    for event, matcher in CLAUDE_HOOK_EVENTS:
+        groups = hooks.get(event, [])
+        if not isinstance(groups, list):
+            raise SetupError(
+                f"{path} has a non-list {event} hook configuration; fix it by hand first"
+            )
+        kept = []
+        for group in groups:
+            if not isinstance(group, dict):
+                kept.append(group)
+                continue
+            entries = group.get("hooks")
+            if not isinstance(entries, list) or not any(ours(entry) for entry in entries):
+                kept.append(group)
+                continue
+            remaining = [entry for entry in entries if not ours(entry)]
+            # A group we emptied was ours alone; drop it rather than leave a husk.
+            if remaining:
+                kept.append({**group, "hooks": remaining})
+
+        group = {
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": claude_hook_command(hook_path, event),
+                    "timeout": 10,
+                }
+            ]
+        }
+        if matcher is not None:
+            group = {"matcher": matcher, **group}
+        hooks[event] = [*kept, group]
+
+    settings["hooks"] = hooks
+    # Keep non-ASCII text as the user wrote it rather than re-escaping it.
+    return json.dumps(settings, indent=2, ensure_ascii=False) + "\n"
+
+
 def zshrc_path(env: dict[str, str], override: str | None) -> Path:
     if override:
         return Path(override).expanduser()
@@ -305,6 +422,8 @@ def plan(args: argparse.Namespace, env: dict[str, str]) -> list[Change]:
 
     zshrc = zshrc_path(env, args.zshrc)
     tmux_conf = tmux_conf_path(env, args.tmux_conf)
+    claude_hook = claude_hook_path(env)
+    claude_settings = claude_settings_path(env)
     tmux_existing = tmux_conf.read_text() if tmux_conf.exists() else ""
     binding_conflict(tmux_existing, tmux_conf)
 
@@ -334,6 +453,15 @@ def plan(args: argparse.Namespace, env: dict[str, str]) -> list[Change]:
         Change(
             pi_extension_path(env),
             pi_extension_contents(bin_dir / "worklight"),
+        ),
+        Change(claude_hook, claude_hook_contents(bin_dir / "worklight")),
+        Change(
+            claude_settings,
+            claude_settings_contents(
+                claude_settings.read_text() if claude_settings.exists() else "",
+                claude_hook,
+                claude_settings,
+            ),
         ),
     ]
 
@@ -485,6 +613,7 @@ def main(argv: list[str] | None = None) -> int:
         print("  tmux: re-run with --reload-tmux to load the binding into a running server")
     print("  Pi: new processes load the Worklight extension automatically")
     print("  Pi: run /reload in an existing process to load the extension")
+    print("  Claude Code: start a new session to pick up the hooks")
     return 0
 
 
