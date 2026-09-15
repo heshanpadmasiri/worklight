@@ -12,6 +12,7 @@ import json
 import os
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -61,6 +62,9 @@ class SetupTestCase(unittest.TestCase):
         self.claude_dir = self.home / ".claude"
         self.claude_hook = self.claude_dir / "worklight" / "hook.py"
         self.claude_settings = self.claude_dir / "settings.json"
+        self.codex_home = self.home / ".codex"
+        self.codex_hooks = self.codex_home / "hooks.json"
+        self.codex_integration = self.config / "integrations.codex.py"
 
     def setup(
         self,
@@ -93,6 +97,7 @@ class SetupTestCase(unittest.TestCase):
         self.assertFalse(self.binary.exists(), "binary was installed")
         self.assertFalse(self.pi_agent_dir.exists(), "Pi agent directory was created")
         self.assertFalse(self.claude_dir.exists(), "Claude Code directory was created")
+        self.assertFalse(self.codex_home.exists(), "Codex directory was created")
 
 
 class PreviewTests(SetupTestCase):
@@ -104,6 +109,8 @@ class PreviewTests(SetupTestCase):
         self.assertIn(str(self.pi_extension), result.stdout)
         self.assertIn(str(self.claude_hook), result.stdout)
         self.assertIn(str(self.claude_settings), result.stdout)
+        self.assertIn(str(self.codex_hooks), result.stdout)
+        self.assertIn(str(self.codex_integration), result.stdout)
         self.assertIn("dry run", result.stdout)
         self.assertUntouched()
 
@@ -204,7 +211,8 @@ class ConfigurationTests(SetupTestCase):
         result = self.setup("--dry-run", env={"CARGO_HOME": str(cargo_home)})
 
         self.assertEqual(result.returncode, 0, self.detail(result))
-        self.assertIn(shlex.quote(str(cargo_home / "bin" / "worklight")), result.stdout)
+        expected = (cargo_home / "bin" / "worklight").resolve()
+        self.assertIn(shlex.quote(str(expected)), result.stdout)
         self.assertIn("_worklight_hook_preexec", result.stdout)
         self.assertIn("_worklight_hook_precmd", result.stdout)
 
@@ -351,6 +359,79 @@ class ConfigurationTests(SetupTestCase):
         self.assertIn(f"const WORKLIGHT_BINARY = {rendered};", contents)
         self.assertNotIn('"__WORKLIGHT_BINARY__"', contents)
 
+    def test_codex_home_override_is_honored(self) -> None:
+        custom_codex = self.root / "custom-codex"
+
+        result = self.setup("--dry-run", env={"CODEX_HOME": str(custom_codex)})
+
+        self.assertEqual(result.returncode, 0, self.detail(result))
+        self.assertIn(str(custom_codex / "hooks.json"), result.stdout)
+        self.assertNotIn(str(self.codex_hooks), result.stdout)
+        self.assertFalse(custom_codex.exists())
+
+    def test_existing_codex_hooks_are_preserved(self) -> None:
+        self.codex_home.mkdir()
+        existing = {
+            "description": "personal hooks",
+            "hooks": {
+                "Stop": [
+                    {
+                        "hooks": [
+                            {"type": "command", "command": "python3 personal.py"}
+                        ]
+                    }
+                ],
+                "CustomEvent": [{"hooks": []}],
+            },
+            "future": {"enabled": True},
+        }
+        self.codex_hooks.write_text(json.dumps(existing))
+
+        result = self.setup("-y")
+
+        self.assertEqual(result.returncode, 0, self.detail(result))
+        installed = json.loads(self.codex_hooks.read_text())
+        self.assertEqual(installed["description"], "personal hooks")
+        self.assertEqual(installed["future"], {"enabled": True})
+        self.assertEqual(installed["hooks"]["CustomEvent"], [{"hooks": []}])
+        stop_handlers = [
+            handler
+            for group in installed["hooks"]["Stop"]
+            for handler in group["hooks"]
+        ]
+        self.assertIn(
+            {"type": "command", "command": "python3 personal.py"}, stop_handlers
+        )
+        self.assertEqual(
+            sum(
+                setup_module.CODEX_HOOK_MARKER in handler.get("command", "")
+                for handler in stop_handlers
+            ),
+            1,
+        )
+
+    def test_malformed_codex_hooks_are_rejected_without_changes(self) -> None:
+        self.codex_home.mkdir()
+        self.codex_hooks.write_text("{not json\n")
+
+        result = self.setup("--dry-run")
+
+        self.assertEqual(result.returncode, 1, self.detail(result))
+        self.assertIn("cannot parse Codex hooks", result.stderr)
+        self.assertEqual(self.codex_hooks.read_text(), "{not json\n")
+        self.assertFalse(self.config.exists())
+
+    def test_codex_hook_binary_path_is_python_safe(self) -> None:
+        unusual = self.root / 'cargo "quoted" \\ path\nnext' / "bin" / "worklight"
+
+        contents = setup_module.codex_hook_contents(unusual)
+
+        self.assertIn(
+            f"WORKLIGHT_BINARY = {json.dumps(str(unusual.resolve()))}",
+            contents,
+        )
+        self.assertNotIn('"__WORKLIGHT_BINARY__"', contents)
+
 
 class InstallationTests(SetupTestCase):
     def test_setup_installs_the_binary_and_writes_the_integrations(self) -> None:
@@ -411,6 +492,69 @@ class InstallationTests(SetupTestCase):
         self.assertIn("new processes load", result.stdout)
         self.assertIn("/reload", result.stdout)
         self.assertIn("Claude Code", result.stdout)
+        codex_runner = self.codex_integration.read_text()
+        self.assertIn(
+            f"WORKLIGHT_BINARY = {json.dumps(str(self.binary.resolve()))}", codex_runner
+        )
+        hooks = json.loads(self.codex_hooks.read_text())["hooks"]
+        self.assertEqual(set(hooks), set(setup_module.CODEX_EVENTS))
+        for groups in hooks.values():
+            self.assertEqual(len(groups), 1)
+            handler = groups[0]["hooks"][0]
+            self.assertEqual(handler["type"], "command")
+            self.assertEqual(handler["timeout"], 3)
+            self.assertIn(setup_module.CODEX_HOOK_MARKER, handler["command"])
+            self.assertIn(str(self.codex_integration.resolve()), handler["command"])
+        self.assertIn("new processes load", result.stdout)
+        self.assertIn("/reload", result.stdout)
+        self.assertIn("use /hooks to review and trust Worklight", result.stdout)
+
+        def codex_event(name: str, **extra: object) -> subprocess.CompletedProcess:
+            payload = {
+                "session_id": "setup-integration-session",
+                "hook_event_name": name,
+                "cwd": str(self.root),
+                **extra,
+            }
+            return subprocess.run(
+                [
+                    sys.executable,
+                    str(self.codex_integration),
+                    setup_module.CODEX_HOOK_MARKER,
+                ],
+                input=json.dumps(payload),
+                capture_output=True,
+                text=True,
+                cwd=self.root,
+                env=self.env,
+                timeout=10,
+            )
+
+        for event in (
+            codex_event("SessionStart", source="startup"),
+            codex_event("UserPromptSubmit", prompt="test"),
+            codex_event("Stop", last_assistant_message="done"),
+        ):
+            self.assertEqual(event.returncode, 0, event.stderr)
+            self.assertEqual(event.stdout, "")
+        database = self.home / ".local" / "share" / "worklight" / "worklight.db"
+        with sqlite3.connect(database) as connection:
+            agent_id, kind, status = connection.execute(
+                "SELECT id,kind,status FROM agents ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        self.assertEqual((kind, status), ("codex", 4))
+
+        ended = codex_event("SessionEnd", reason="other")
+        self.assertEqual(ended.returncode, 0, ended.stderr)
+        completed = subprocess.run(
+            [str(self.binary), "agent", "get", str(agent_id)],
+            capture_output=True,
+            text=True,
+            env=self.env,
+            timeout=10,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("\tkilled\t", completed.stdout)
 
     def test_rerunning_changes_nothing_and_writes_no_backup(self) -> None:
         self.assertEqual(self.setup("-y").returncode, 0)
@@ -431,6 +575,9 @@ class InstallationTests(SetupTestCase):
         self.assertEqual(
             list(self.claude_dir.glob("settings.json.worklight-*.bak")), []
         )
+        self.assertEqual(
+            list(self.codex_home.glob("hooks.json.worklight-*.bak")), []
+        )
 
     def test_an_update_backs_up_and_preserves_unrelated_content(self) -> None:
         self.zshrc.write_text("export EDITOR=vi\n")
@@ -448,6 +595,11 @@ class InstallationTests(SetupTestCase):
         ]
         stale_settings["editorMode"] = "vim"
         self.claude_settings.write_text(json.dumps(stale_settings, indent=2) + "\n")
+        hooks = json.loads(self.codex_hooks.read_text())
+        hooks["hooks"]["Stop"].append(
+            {"hooks": [{"type": "command", "command": "python3 personal.py"}]}
+        )
+        self.codex_hooks.write_text(json.dumps(hooks))
 
         result = self.setup("-y")
 
@@ -471,6 +623,23 @@ class InstallationTests(SetupTestCase):
         # An unrelated setting survives and the stale hook entry is not doubled.
         self.assertEqual(settings["editorMode"], "vim")
         self.assertEqual(len(settings["hooks"]["Stop"]), 1)
+        installed_hooks = json.loads(self.codex_hooks.read_text())
+        stop_handlers = [
+            handler
+            for group in installed_hooks["hooks"]["Stop"]
+            for handler in group["hooks"]
+        ]
+        self.assertIn(
+            {"type": "command", "command": "python3 personal.py"}, stop_handlers
+        )
+        self.assertEqual(
+            sum(
+                setup_module.CODEX_HOOK_MARKER in handler.get("command", "")
+                for handler in stop_handlers
+            ),
+            1,
+        )
+        self.assertTrue(list(self.codex_home.glob("hooks.json.worklight-*.bak")))
 
     def test_a_requested_tmux_reload_failure_returns_nonzero(self) -> None:
         missing_socket = self.root / "missing-tmux.sock"

@@ -29,7 +29,7 @@ description = "Install the binary into Cargo's installation directory"
 run = "cargo install --path . --force"
 
 [tasks.setup]
-description = "Install and configure the zsh and tmux integrations"
+description = "Install and configure shell, tmux, Pi and Codex integrations"
 run = "python3 scripts/setup.py"
 
 [tasks.bench]

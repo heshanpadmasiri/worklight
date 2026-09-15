@@ -172,6 +172,29 @@ fails to report is retried by the next event that wants it. A crash, forced
 termination, or command failure can leave a stale agent; Worklight performs no
 heartbeat, PID polling, or stale-row cleanup.
 
+## Codex integration
+
+Setup also installs user-level Codex lifecycle hooks. They represent each main
+Codex session as one Worklight agent, across local Codex clients that share the
+same user configuration. Codex subagents are not registered separately. The
+hooks map lifecycle events as follows:
+
+- session start registers an `idle` agent (compaction does not register again);
+- prompt submission reports `working`;
+- permission requests report `waiting`, and approved tool execution restores
+  `working`;
+- turn settlement and interruption report `working` then `done`;
+- session end reports terminal `killed`.
+
+The repeated `working` update repairs a missed transition or an unresolved
+permission prompt before completion. A denied permission can remain `waiting`
+briefly until Codex next runs a tool, settles, is interrupted, or ends.
+
+Tracking is best effort and hook failures never steer or block Codex. The hook
+runner keeps the Worklight ID in small, locked session files under the XDG data
+directory. A failed command, forced termination, or timeout can still leave a
+stale agent, just as with the Pi integration.
+
 ## Install and set up
 
     mise run setup            # show planned diffs, then ask
@@ -215,8 +238,20 @@ produces identical text. A settings file that is not valid JSON, or whose hook
 configuration has an unexpected shape, is reported rather than overwritten.
 Start a new Claude Code session after setup.
 
-Every generated file, including the Pi extension, participates in setup's
-diff, confirmation, dry-run, backup, idempotency, and partial-failure behavior.
+The Codex hook runner is installed at:
+
+    ${XDG_CONFIG_HOME:-${HOME}/.config}/worklight/integrations.codex.py
+
+Setup merges its handlers into `${CODEX_HOME:-${HOME}/.codex}/hooks.json`,
+preserving other hook groups and top-level settings. Start a new Codex session,
+then use `/hooks` to review and trust the Worklight definitions; Codex skips
+new or changed user hooks until they are trusted. Setup does not bypass that
+review or force-enable hooks when a user or administrator has disabled them.
+
+Every generated file, including the Pi extension, Claude Code hook, and Codex
+integration, participates in setup's diff, confirmation, dry-run, backup,
+idempotency, and partial-failure behavior.
+
 Existing prefix + Space bindings, ambiguous configuration paths, and duplicate
 marked blocks are reported rather than overwritten. Unrelated content is
 preserved. Start a new zsh session for shell changes; loading the tmux binding
@@ -238,7 +273,8 @@ Older, unknown, and nonempty versionless schemas remain incompatible.
     mise run test             # fast native correctness tests
     mise run test:e2e         # CLI and setup end-to-end tests
     mise run test:terminal    # PTY and tmux end-to-end tests
-    node agents/pi/index.test.mjs  # dependency-free Pi lifecycle harness
+    node agents/pi/index.test.mjs       # dependency-free Pi lifecycle harness
+    python3 e2e/test_codex_integration.py  # Codex lifecycle harness
     mise run bench            # isolated SQLite benchmarks
 
 Every end-to-end Python file is directly runnable and owns temporary HOME,
@@ -252,6 +288,7 @@ the commands it was asked to run.
 
     agents/claude/hook.py    Claude Code lifecycle hook source template
     agents/pi/index.ts       Pi lifecycle extension source template
+    agents/codex/index.py    Codex lifecycle hook source template
     scripts/setup.py         binary and integration installer
     src/agent.rs             harness-neutral tracked agent runtime
     src/storage.rs           storage facade and shared validation

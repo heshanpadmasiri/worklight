@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install Worklight from this checkout and manage its shell/tmux integrations.
+"""Install Worklight and manage its shell, tmux, Pi, Claude, and Codex integrations.
 
 Run through mise: `mise run setup [-- -y|--dry-run|...]`.
 
@@ -26,6 +26,16 @@ BEGIN = "# >>> worklight >>>"
 END = "# <<< worklight <<<"
 TMUX_BEGIN = "# >>> worklight >>>"
 TMUX_END = "# <<< worklight <<<"
+CODEX_HOOK_MARKER = "--worklight-codex-hook"
+CODEX_EVENTS = {
+    "SessionStart": "^(startup|resume|clear)$",
+    "UserPromptSubmit": None,
+    "PermissionRequest": None,
+    "PreToolUse": None,
+    "Stop": None,
+    "Interrupt": None,
+    "SessionEnd": None,
+}
 
 
 class SetupError(Exception):
@@ -190,6 +200,96 @@ def claude_settings_contents(existing: str, hook_path: Path, path: Path) -> str:
     settings["hooks"] = hooks
     # Keep non-ASCII text as the user wrote it rather than re-escaping it.
     return json.dumps(settings, indent=2, ensure_ascii=False) + "\n"
+
+
+def codex_home(env: dict[str, str]) -> Path:
+    override = env.get("CODEX_HOME")
+    if override:
+        return Path(override).expanduser()
+    return Path(env.get("HOME", "~")).expanduser() / ".codex"
+
+
+def codex_hook_source() -> Path:
+    return CHECKOUT / "agents" / "codex" / "index.py"
+
+
+def codex_hook_contents(binary: Path) -> str:
+    placeholder = '"__WORKLIGHT_BINARY__"'
+    source = codex_hook_source().read_text()
+    if source.count(placeholder) != 1:
+        raise SetupError(
+            f"{codex_hook_source()} must contain exactly one Worklight binary placeholder"
+        )
+    absolute_binary = binary.expanduser().resolve()
+    return source.replace(placeholder, json.dumps(str(absolute_binary)))
+
+
+def codex_hook_command(hook: Path) -> str:
+    return " ".join(
+        (shlex.quote(sys.executable), shlex.quote(str(hook.resolve())), CODEX_HOOK_MARKER)
+    )
+
+
+def is_worklight_codex_handler(value: object) -> bool:
+    if not isinstance(value, dict) or value.get("type") != "command":
+        return False
+    command = value.get("command")
+    if not isinstance(command, str):
+        return False
+    try:
+        return CODEX_HOOK_MARKER in shlex.split(command)
+    except ValueError:
+        return False
+
+
+def codex_hooks_contents(path: Path, hook: Path) -> str:
+    if path.exists():
+        try:
+            document = json.loads(path.read_text())
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            raise SetupError(f"cannot parse Codex hooks at {path}: {error}") from error
+    else:
+        document = {}
+    if not isinstance(document, dict):
+        raise SetupError(f"Codex hooks at {path} must contain a JSON object")
+    hooks = document.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        raise SetupError(f"Codex hooks field at {path} must contain a JSON object")
+
+    for event, groups in list(hooks.items()):
+        if not isinstance(groups, list):
+            raise SetupError(f"Codex hook event {event!r} at {path} must contain an array")
+        cleaned_groups = []
+        for group in groups:
+            if not isinstance(group, dict):
+                raise SetupError(f"Codex hook group for {event!r} at {path} must be an object")
+            handlers = group.get("hooks")
+            if not isinstance(handlers, list):
+                raise SetupError(
+                    f"Codex hook group for {event!r} at {path} must contain a hooks array"
+                )
+            owned = [handler for handler in handlers if is_worklight_codex_handler(handler)]
+            if not owned:
+                cleaned_groups.append(group)
+                continue
+            cleaned = [handler for handler in handlers if not is_worklight_codex_handler(handler)]
+            if cleaned:
+                preserved = dict(group)
+                preserved["hooks"] = cleaned
+                cleaned_groups.append(preserved)
+        hooks[event] = cleaned_groups
+
+    handler = {
+        "type": "command",
+        "command": codex_hook_command(hook),
+        "timeout": 3,
+    }
+    for event, matcher in CODEX_EVENTS.items():
+        group: dict[str, object] = {"hooks": [dict(handler)]}
+        if matcher is not None:
+            group["matcher"] = matcher
+        hooks.setdefault(event, []).append(group)
+    return json.dumps(document, indent=2, ensure_ascii=False) + "\n"
 
 
 def zshrc_path(env: dict[str, str], override: str | None) -> Path:
@@ -419,6 +519,8 @@ def plan(args: argparse.Namespace, env: dict[str, str]) -> list[Change]:
     conf = config_dir(env)
     zsh_file = conf / "integrations.zsh"
     tmux_file = conf / "integrations.tmux"
+    codex_file = conf / "integrations.codex.py"
+    codex_hooks = codex_home(env) / "hooks.json"
 
     zshrc = zshrc_path(env, args.zshrc)
     tmux_conf = tmux_conf_path(env, args.tmux_conf)
@@ -463,6 +565,8 @@ def plan(args: argparse.Namespace, env: dict[str, str]) -> list[Change]:
                 claude_settings,
             ),
         ),
+        Change(codex_file, codex_hook_contents(bin_dir / "worklight")),
+        Change(codex_hooks, codex_hooks_contents(codex_hooks, codex_file)),
     ]
 
 
@@ -614,6 +718,7 @@ def main(argv: list[str] | None = None) -> int:
     print("  Pi: new processes load the Worklight extension automatically")
     print("  Pi: run /reload in an existing process to load the extension")
     print("  Claude Code: start a new session to pick up the hooks")
+    print("  Codex: start a new session, then use /hooks to review and trust Worklight")
     return 0
 
 
