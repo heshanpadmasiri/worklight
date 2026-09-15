@@ -14,6 +14,18 @@ fn accepts_every_tracked_executable_directly_and_through_sudo() {
 }
 
 #[test]
+fn accepts_git_rebase_directly_and_through_sudo() {
+    for command in [
+        "git rebase",
+        "git rebase main",
+        "git rebase --continue",
+        "sudo git rebase origin/main",
+    ] {
+        assert!(should_track(command), "{command}");
+    }
+}
+
+#[test]
 fn accepts_foreground_command_lines() {
     for command in [
         "  cargo test  ",
@@ -63,6 +75,12 @@ fn rejects_nonliteral_or_untracked_prefixes() {
         "sudo /usr/bin/cargo test",
         "sudo 'cargo' test",
         "sudocargo test",
+        "git",
+        "git status",
+        "git -C repo rebase main",
+        "git 'rebase' main",
+        r"git re\base main",
+        "sudo git status",
     ] {
         assert!(!should_track(command), "{command:?}");
     }

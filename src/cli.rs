@@ -11,8 +11,21 @@ use crate::storage::Storage;
 use crate::tui;
 
 const TRACKED_COMMANDS: &[&str] = &[
-    "cargo", "make", "gmake", "go", "npm", "npx", "pnpm", "pnpx", "yarn", "bun", "gradle",
-    "gradlew", "mvn", "mvnw",
+    "cargo",
+    "make",
+    "gmake",
+    "go",
+    "npm",
+    "npx",
+    "pnpm",
+    "pnpx",
+    "yarn",
+    "bun",
+    "gradle",
+    "gradlew",
+    "mvn",
+    "mvnw",
+    "git rebase",
 ];
 
 /// Classify command text without parsing or executing it.
@@ -43,22 +56,27 @@ pub(crate) fn should_track(command: &str) -> bool {
     let Some((first, mut end)) = word(command, start) else {
         return false;
     };
-    let executable = if first == "sudo" {
+    let command_start = if first == "sudo" {
         let separator = end;
         while end < bytes.len() && bytes[end].is_ascii_whitespace() {
             end += 1;
         }
-        if end == separator {
+        if end == separator || word(command, end).is_none() {
             return false;
         }
-        let Some((second, _)) = word(command, end) else {
-            return false;
-        };
-        second
+        end
     } else {
-        first
+        start
     };
-    if !TRACKED_COMMANDS.contains(&executable) {
+    let invocation = &command[command_start..];
+    if !TRACKED_COMMANDS.iter().any(|tracked| {
+        invocation.strip_prefix(tracked).is_some_and(|remainder| {
+            remainder
+                .as_bytes()
+                .first()
+                .is_none_or(|byte| byte.is_ascii_whitespace() || b";|&<>()".contains(byte))
+        })
+    }) {
         return false;
     }
 

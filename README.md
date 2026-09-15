@@ -26,11 +26,11 @@ zero means `succeeded`, and anything else means `failed` (`130` is shown as
 
 `start` accepts commands whose first literal token is `cargo`, `make`, `gmake`,
 `go`, `npm`, `npx`, `pnpm`, `pnpx`, `yarn`, `bun`, `gradle`, `gradlew`, `mvn`,
-or `mvnw`. Literal `sudo` followed immediately by one of those names is also
-accepted. Matching is case-sensitive; assignments, paths, wrappers,
-quoted/escaped executables, sudo options, and command lines containing a
-top-level background operator are rejected. Foreground pipelines and
-conditional chains are tracked as one run.
+or `mvnw`, as well as `git rebase`. Literal `sudo` followed immediately by one
+of those commands is also accepted. Matching is case-sensitive; assignments,
+paths, wrappers, quoted/escaped executables, sudo options, other Git
+subcommands, and command lines containing a top-level background operator are
+rejected. Foreground pipelines and conditional chains are tracked as one run.
 
 An ineligible `start` prints exactly `0`, succeeds, and creates no database.
 `--dry-run start` does the same for every command without validation. The zsh
