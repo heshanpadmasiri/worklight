@@ -64,8 +64,8 @@ impl AgentStatus {
         match self {
             Self::Waiting => 0,
             Self::Idle => 1,
-            Self::Working => 2,
-            Self::Done => 3,
+            Self::Done => 2,
+            Self::Working => 3,
             Self::Killed => 4,
         }
     }

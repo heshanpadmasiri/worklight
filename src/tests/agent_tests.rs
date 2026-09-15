@@ -68,8 +68,8 @@ fn direct_transition_table_is_complete() {
     }
     assert_eq!(AgentStatus::Waiting.priority(), 0);
     assert_eq!(AgentStatus::Idle.priority(), 1);
-    assert_eq!(AgentStatus::Working.priority(), 2);
-    assert_eq!(AgentStatus::Done.priority(), 3);
+    assert_eq!(AgentStatus::Done.priority(), 2);
+    assert_eq!(AgentStatus::Working.priority(), 3);
     assert_eq!(AgentStatus::Killed.priority(), 4);
 }
 

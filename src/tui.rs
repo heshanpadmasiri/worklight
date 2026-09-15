@@ -1133,9 +1133,9 @@ mod tests {
             vec![
                 TrackedId::Agent(waiting.id()),
                 TrackedId::Agent(idle.id()),
+                TrackedId::Agent(done.id()),
                 TrackedId::Agent(working_new.id()),
                 TrackedId::Agent(working_old.id()),
-                TrackedId::Agent(done.id()),
                 TrackedId::Process(process.id()),
             ]
         );
