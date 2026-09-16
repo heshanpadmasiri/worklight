@@ -470,7 +470,7 @@ impl PanelData {
             .selected
             .and_then(|id| ids.iter().position(|candidate| *candidate == id))
             .unwrap_or(0) as isize;
-        let next = (current + delta).clamp(0, ids.len() as isize - 1) as usize;
+        let next = (current + delta).rem_euclid(ids.len() as isize) as usize;
         self.selected = Some(ids[next]);
         self.ensure_selected_visible(&ids);
     }
@@ -1179,6 +1179,36 @@ mod tests {
             ]
         );
         assert_eq!(process.id(), idle.id(), "table-local IDs should overlap");
+    }
+
+    #[test]
+    fn selection_wraps_between_the_top_agent_and_bottom_process() {
+        let fixture = Fixture::new();
+        let storage = fixture.storage();
+        let bottom_process = storage
+            .create_process("old process", Path::new("/old"), None)
+            .unwrap();
+        storage
+            .create_process("new process", Path::new("/new"), None)
+            .unwrap();
+        let top_agent = storage
+            .create_agent("agent", Path::new("/agent"), None)
+            .unwrap();
+
+        let mut panel = PanelData::load(fixture.storage(), false).unwrap();
+        panel.resize(1);
+        assert_eq!(panel.selected, Some(TrackedId::Agent(top_agent.id())));
+
+        panel.move_selection(-1);
+        assert_eq!(
+            panel.selected,
+            Some(TrackedId::Process(bottom_process.id()))
+        );
+        assert_eq!(panel.viewport_start, 2);
+
+        panel.move_selection(1);
+        assert_eq!(panel.selected, Some(TrackedId::Agent(top_agent.id())));
+        assert_eq!(panel.viewport_start, 0);
     }
 
     #[test]
