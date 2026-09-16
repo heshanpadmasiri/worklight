@@ -68,6 +68,19 @@ function commandArgs(runtime) {
   return runtime.calls.map((call) => call.args);
 }
 
+async function testSubagentChildrenAreIgnored() {
+  process.env.PI_MULTIPLEXER_SUBAGENT_CHILD = "1";
+  try {
+    const runtime = fakeApi();
+    await runtime.emit("session_start");
+    await runtime.emit("before_agent_start");
+    await runtime.emit("session_shutdown");
+    assert.deepEqual(runtime.calls, []);
+  } finally {
+    delete process.env.PI_MULTIPLEXER_SUBAGENT_CHILD;
+  }
+}
+
 async function testLifecycleOrder() {
   const runtime = fakeApi();
   await runtime.emit("session_start");
@@ -302,6 +315,7 @@ async function testRuntimeReplacementOrdering() {
 const originalConsoleError = console.error;
 console.error = () => {};
 try {
+  await testSubagentChildrenAreIgnored();
   await testLifecycleOrder();
   await testDoneAgentReactivatesForAnotherRun();
   await testPromptOrderingDoesNotWaitForExec();

@@ -36,6 +36,8 @@ function parseAgentId(stdout: string): string | undefined {
 }
 
 export default function worklightAgentTracking(pi: ExtensionAPI): void {
+  if (process.env.PI_MULTIPLEXER_SUBAGENT_CHILD === "1") return;
+
   let agentId: string | undefined;
   let expectedStatus: AgentStatus | undefined;
   let runActive = false;
