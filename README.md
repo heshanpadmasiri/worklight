@@ -1,316 +1,96 @@
 # Worklight
 
-Worklight automatically tracks selected foreground commands entered in
-interactive zsh and tracks supported agent-harness runtimes. Its terminal panel
-shows actionable work and can navigate back to the originating shell or tmux
-pane.
-
-Worklight never executes or wraps a tracked command. Command labels are
-metadata, and harness integrations report their own lifecycle through the agent
-CLI.
-
-## Commands
-
-### Manually tracked processes
-
-    worklight process start "cargo test"          # prints a tracking id
-    worklight process finish <id> <exit_code>     # records the result
-    worklight process get <id>
-    worklight process list [--active]
-    worklight process acknowledge <id>
-    worklight process focus <id> [navigation arguments...]
-
-A process state is derived from its exit code: no exit code means `running`,
-zero means `succeeded`, and anything else means `failed` (`130` is shown as
-`failed/130`).
-
-`start` accepts commands whose first literal token is `cargo`, `make`, `gmake`,
-`go`, `npm`, `npx`, `pnpm`, `pnpx`, `yarn`, `bun`, `gradle`, `gradlew`, `mvn`,
-or `mvnw`, as well as `git rebase`. Literal `sudo` followed immediately by one
-of those commands is also accepted. Matching is case-sensitive; assignments,
-paths, wrappers, quoted/escaped executables, sudo options, other Git
-subcommands, and command lines containing a top-level background operator are
-rejected. Foreground pipelines and conditional chains are tracked as one run.
-
-An ineligible `start` prints exactly `0`, succeeds, and creates no database.
-`--dry-run start` does the same for every command without validation. The zsh
-hook retains only a positive ID, so rejected commands receive no completion.
-
-### Agents
-
-    worklight agent register <kind>       # prints a positive tracking id
-    worklight agent status <id> <status>
-    worklight agent get <id>
-    worklight agent list [--active]
-    worklight agent acknowledge <id>
-    worklight agent focus <id> [navigation arguments...]
-
-The five agent statuses are `idle`, `working`, `waiting`, `done`, and `killed`.
-Allowed effective transitions are:
-
-- `idle` to `working` or `killed`;
-- `working` to `waiting`, `done`, or `killed`;
-- `waiting` to `working` or `killed`;
-- `done` to `working` or `killed`;
-- none from `killed`, which is terminal.
-
-Reporting the current status again succeeds without changing the row. Every
-real status transition clears acknowledgment, so a previously acknowledged
-`done` agent becomes actionable again when it starts `working`. Only `done`
-agents can be acknowledged; repeated acknowledgment is harmless.
-
-Agent and process IDs come from separate tables and may have the same numeric
-value. Always use the `agent` subcommands for agent IDs.
-
-### Output and global options
-
-Global options are `--database PATH` and `--dry-run`. Dry-run reads and
-validates without writing or navigating. A dry-run process start or agent
-registration prints `0` and creates no tracking row.
-
-Commands that report a process print escaped TSV columns:
-
-    id  state  exit  elapsed_ms  acknowledged  orchestrator  cwd  label
-
-Commands that report an agent print:
-
-    id  status  acknowledged  elapsed_ms  orchestrator  cwd  kind
-
-Within fields, backslash, tab, carriage return, and newline are escaped as
-`\\`, `\t`, `\r`, and `\n`, so every item occupies exactly one row.
-
-## Panel
-
-Run `worklight panel`, or simply `worklight`, to open the Ratatui panel. It
-synchronizes persisted state every five seconds. Arrows or `j`/`k` select,
-`Enter` navigates, `a` acknowledges a completed process or `done` agent, `h`
-toggles acknowledged process history, and `q` or `Esc` quits. Acknowledging a
-running process, a non-`done` agent, or an already acknowledged process is a
-no-op.
-
-After its initial data load, each writable panel session starts one best-effort database
-maintenance pass on a background thread. Maintenance never runs in ordinary CLI
-commands or dry-run panels. If more than 1,000 acknowledged processes or killed
-agents have accumulated, it removes at most the oldest 500 of each and deletes
-orphaned navigation records. Lock contention causes the pass to skip; SQLite
-reuses the freed pages, so maintenance does not run `VACUUM`. Running and
-unacknowledged processes and resumable `done` agents are never collected.
-
-Agents and processes are displayed in separate tables. Both show command,
-state, elapsed time, and working directory; processes additionally show exit
-status. Their box titles make a type column unnecessary. Actionable agents are
-ordered `waiting`, `idle`,
-`working`, then `done`, with newer agents first inside each status.
-Acknowledged `done` agents and `killed` agents
-are hidden. Hidden acknowledged agents remain synchronized and reappear after
-normal synchronization if the same runtime starts working again.
-
-Opening or refreshing the panel acknowledges nothing. Pressing `a` directly
-acknowledges the selected completed process or conditionally acknowledges the
-selected agent only if its current stored status is still `done`. Successful
-navigation has the same acknowledgment behavior. Failed navigation never
-acknowledges and opens a confirmation popup that can delete the stale agent or
-process from the database. The `h` history view is process-only and does
-nothing to agent state.
-
-## Where work started
-
-At start or registration Worklight records the current tmux pane and working
-directory, or falls back to a shell record holding the working directory. A
-process finish updates its destination from the finishing environment. An agent
-keeps its registration destination for its runtime. The pane identifier is
-sufficient for navigation within the current tmux server; no server or socket
-metadata is persisted. The tmux orchestrator accepts `--client NAME` during
-focus to switch only that attached client. A plain shell record cannot be
-focused; Worklight reports that rather than guessing.
-
-## Pi integration
-
-Setup installs a dependency-free global Pi extension that represents each Pi
-extension runtime as one Worklight agent. It maps Pi events as follows:
-
-- session start registers an `idle` agent;
-- agent work reports `working`;
-- blocking extension UI prompts during active agent work report `waiting`, then
-  `working` when closed (prompts from idle extension commands are ignored);
-- final settlement reports `working` then `done` (the repeated `working`
-  repairs missed updates and closes a waiting span);
-- session shutdown reports terminal `killed`.
-
-Pi runtime replacement flows—including `/new`, `/resume`, `/fork`, `/clone`,
-and `/reload`—shut down the old runtime and register a new ID. Worklight IDs
-are not stored in Pi session files or reused.
-
-Tracking is best effort: a Worklight command failure never fails a Pi lifecycle
-event. Shutdown waits at most 12 seconds for queued updates and cleanup. A
-crash, forced termination, command failure, or timeout can therefore leave a
-stale active agent; Worklight performs no heartbeat or PID polling and cannot
-automatically identify abandoned active rows.
-
-## Claude Code integration
-
-Setup installs a dependency-free hook script and registers it in the Claude Code
-settings file, representing each Claude Code session as one Worklight agent. It
-maps Claude Code hook events as follows:
-
-- session start registers an `idle` agent;
-- a submitted prompt reports `working`;
-- a blocking prompt — a permission request or an elicitation dialog — reports
-  `waiting`, but only while the agent is `working`, so the idle and quota
-  notifications that arrive after a turn are ignored;
-- the next completed tool call reports `working` again, because Claude Code
-  emits no permission-granted event;
-- the end of a turn reports `working` then `done` (the repeated `working`
-  repairs missed updates and closes a waiting span that a denied permission
-  would otherwise leave open);
-- session end reports terminal `killed`.
-
-Compaction continues the same session, so its agent is kept. Every other start —
-startup, `/clear`, `--resume`, and `/branch` — retires the agent the session
-recorded and registers a new ID. Subagents are part of one main-agent run and
-report nothing of their own.
-
-Because each hook is a separate process, the Worklight ID lives in a state file
-per session under `${XDG_STATE_HOME}/worklight/claude`, or
-`${HOME}/.local/state/worklight/claude`. A status equal to the recorded one is
-never sent, so the hook on tool completion usually runs no command at all. The
-file is removed at session end, and files older than seven days are pruned at
-session start.
-
-Tracking is best effort: the hook always exits zero, never writes to standard
-output, and records failures in `hook.log` beside the state files. A status that
-fails to report is retried by the next event that wants it. A crash, forced
-termination, or command failure can leave a stale active agent; Worklight
-performs no heartbeat or PID polling and cannot automatically identify
-abandoned active rows.
-
-## Codex integration
-
-Setup also installs user-level Codex lifecycle hooks. They represent each main
-Codex session as one Worklight agent, across local Codex clients that share the
-same user configuration. Codex subagents are not registered separately. The
-hooks map lifecycle events as follows:
-
-- session start registers an `idle` agent (compaction does not register again);
-- prompt submission reports `working`;
-- permission requests report `waiting`, and approved tool execution restores
-  `working`;
-- turn settlement and interruption report `working` then `done`;
-- session end reports terminal `killed`.
-
-The repeated `working` update repairs a missed transition or an unresolved
-permission prompt before completion. A denied permission can remain `waiting`
-briefly until Codex next runs a tool, settles, is interrupted, or ends.
-
-Tracking is best effort and hook failures never steer or block Codex. The hook
-runner keeps the Worklight ID in small, locked session files under the XDG data
-directory. A failed command, forced termination, or timeout can still leave a
-stale agent, just as with the Pi integration.
-
-## Install and set up
-
-    mise run setup            # show planned diffs, then ask
-    mise run setup -- -y      # accept ordinary confirmations
-    mise run setup -- --dry-run
-
-Setup installs the binary through Cargo's installation directory (honoring
-`CARGO_HOME`) and writes `integrations.zsh` and `integrations.tmux` under the
-user config directory, loaded from marked blocks in `.zshrc` and the tmux
-configuration. Under the same single setup confirmation, the zsh integration
-adds idempotent `preexec`/`precmd` hooks that send the complete unevaluated
-command line to the installed binary and finish accepted runs with zsh's final
-status. The tmux integration binds prefix + Space to a popup that opens the
-panel and passes the initiating client.
-
-The rendered Pi extension is installed at:
-
-    ${PI_CODING_AGENT_DIR}/extensions/worklight/index.ts
-
-when `PI_CODING_AGENT_DIR` is nonempty, or otherwise at:
-
-    ${HOME}/.pi/agent/extensions/worklight/index.ts
-
-It embeds the absolute Cargo-installed Worklight binary path, so Pi does not
-depend on a newly changed shell `PATH`. Setup does not edit Pi settings or
-reload Pi. New Pi processes auto-discover the extension; run `/reload` in an
-existing Pi process after setup.
-
-The rendered Claude Code hook is installed at:
-
-    ${CLAUDE_CONFIG_DIR}/worklight/hook.py
-
-when `CLAUDE_CONFIG_DIR` is nonempty, or otherwise at
-`${HOME}/.claude/worklight/hook.py`. It embeds the same absolute binary path and
-is run as `/usr/bin/env python3`, so it needs no executable bit. Setup registers
-it in `settings.json` beside it, replacing only the hook entries that name this
-script and preserving every other setting and hook. JSON has no marked-block
-equivalent, so that file is re-serialized rather than edited in place: the full
-diff is shown before anything is written, a backup is kept, and a second run
-produces identical text. A settings file that is not valid JSON, or whose hook
-configuration has an unexpected shape, is reported rather than overwritten.
-Start a new Claude Code session after setup.
-
-The Codex hook runner is installed at:
-
-    ${XDG_CONFIG_HOME:-${HOME}/.config}/worklight/integrations.codex.py
-
-Setup merges its handlers into `${CODEX_HOME:-${HOME}/.codex}/hooks.json`,
-preserving other hook groups and top-level settings. Start a new Codex session,
-then use `/hooks` to review and trust the Worklight definitions; Codex skips
-new or changed user hooks until they are trusted. Setup does not bypass that
-review or force-enable hooks when a user or administrator has disabled them.
-
-Every generated file, including the Pi extension, Claude Code hook, and Codex
-integration, participates in setup's diff, confirmation, dry-run, backup,
-idempotency, and partial-failure behavior.
-
-Existing prefix + Space bindings, ambiguous configuration paths, and duplicate
-marked blocks are reported rather than overwritten. Unrelated content is
-preserved. Start a new zsh session for shell changes; loading the tmux binding
-into an existing server is opt-in with `--reload-tmux`.
-
-## Database migration
-
-New databases use schema version 4. To keep ordinary commands out of the
-maintenance path, they continue to read and write version-3 databases without
-building collection indexes. When a background panel pass finds more than the
-collection threshold, it upgrades version 3 by adding those indexes
-transactionally before deleting rows. Opening a writable version-2 database
-first adds agent storage and its existing indexes;
-existing process, shell, and tmux rows are not rewritten. A failed migration
-rolls back and leaves the prior version intact. Read-only and dry-run access to
-a version-2 database reports that a writable migration is required; version 3
-remains readable without change.
-Older, unknown, and nonempty versionless schemas remain incompatible.
-
-## Development
-
-    mise run build            # cargo build --release
-    mise run check            # rustfmt and clippy
-    mise run test             # fast native correctness tests
-    mise run test:e2e         # CLI and setup end-to-end tests
-    mise run test:terminal    # PTY and tmux end-to-end tests
-    node agents/pi/index.test.mjs       # dependency-free Pi lifecycle harness
-    python3 e2e/test_codex_integration.py  # Codex lifecycle harness
-    mise run bench            # isolated SQLite benchmarks
-
-Every end-to-end Python file is directly runnable and owns temporary HOME,
-configuration, and database paths. The Pi harness renders the setup-time binary
-placeholder into a temporary extension and drives it through a fake extension
-API. The Claude Code tests render the same placeholder into a temporary hook and
-run it once per event, as Claude Code does, against a stub binary that records
-the commands it was asked to run.
-
-## Layout
-
-    agents/claude/hook.py    Claude Code lifecycle hook source template
-    agents/pi/index.ts       Pi lifecycle extension source template
-    agents/codex/index.py    Codex lifecycle hook source template
-    scripts/setup.py         binary and integration installer
-    src/agent.rs             harness-neutral tracked agent runtime
-    src/storage.rs           storage facade and shared validation
-    src/storage/sqlite.rs    SQLite schema, migration, and transactions
-    src/orchestrator.rs      tmux/shell detection and navigation
-    src/process.rs           manually tracked process run
-    src/cli.rs               parsing, dispatch, and TSV formatting
-    src/tui.rs               combined agent/process panel
+Worklight tracks long-running foreground commands and AI agent sessions. Its terminal panel shows
+their status and can jump back to the originating tmux pane.
+
+![Worklight running as a tmux pane: agents and long-running processes with their state, and enter jumping to the pane each one came from](docs/demo.gif)
+
+The panel lists agents (Claude, Codex, Pi — whatever has a hook installed) and the long-running
+processes detected by the shell hook. It shows each item's state, elapsed time, and origin. `Enter`
+jumps to the originating pane and closes the panel, `a` acknowledges completed work, `h` shows
+history, and `q` closes the panel.
+
+## Install
+
+Worklight requires mise, Rust, and Python 3. Run these commands from the repository root.
+
+Install only the CLI:
+
+```sh
+mise run install
+command -v worklight
+worklight --help
+```
+
+Install the CLI and all integrations:
+
+```sh
+mise run setup -- --dry-run
+mise run setup -- -y
+```
+
+Setup installs all integrations together; it has no per-integration selector. Changed files are
+backed up as `.worklight-<timestamp>.bak`.
+
+| Component | Installed files | Activation |
+| --- | --- | --- |
+| CLI | `${CARGO_HOME:-$HOME/.cargo}/bin/worklight` | None |
+| zsh | `integrations.zsh` and a loader block in `.zshrc` | Start a new zsh session. |
+| tmux | `integrations.tmux` and a loader block in `tmux.conf` | Reload tmux; Prefix + Space opens Worklight. |
+| Pi | `${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/extensions/worklight/index.ts` | New processes load it automatically; use `/reload` in an existing process. |
+| Claude Code | `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/worklight/hook.py` and entries in `settings.json` | Start a new session. |
+| Codex | `integrations.codex.py` and entries in `${CODEX_HOME:-$HOME/.codex}/hooks.json` | Start a new session, then review and trust the hooks with `/hooks`. |
+
+Reload the default tmux server during setup, or specify a socket:
+
+```sh
+mise run setup -- -y --reload-tmux
+mise run setup -- -y --reload-tmux /path/to/socket
+```
+
+## Configuration
+
+Worklight options:
+
+| Option or variable | Description |
+| --- | --- |
+| `--database PATH` | Use a specific SQLite database. |
+| `WORKLIGHT_DB` | Set the database when `--database` is omitted. |
+| `XDG_DATA_HOME` | Set the default data directory; the fallback is `$HOME/.local/share`. |
+| `--dry-run` | Read and validate without writing, navigating, or creating tracking rows. |
+
+The default database is `${XDG_DATA_HOME:-$HOME/.local/share}/worklight/worklight.db`.
+
+Setup options and path overrides:
+
+| Option or variable | Description |
+| --- | --- |
+| `-y`, `--yes` | Apply changes without prompting. |
+| `--dry-run` | Preview changes without building or writing. |
+| `--zshrc PATH` | Select the zsh configuration to edit. |
+| `--tmux-conf PATH` | Select the tmux configuration to edit. |
+| `--reload-tmux [SOCKET]` | Load the generated integration into a running tmux server. |
+| `CARGO_HOME` | Select Cargo's installation directory. |
+| `XDG_CONFIG_HOME` | Select the config directory; the fallback is `$HOME/.config`. |
+| `ZDOTDIR` | Select `.zshrc` when `--zshrc` is omitted. |
+| `PI_CODING_AGENT_DIR` | Select the Pi agent directory. |
+| `CLAUDE_CONFIG_DIR` | Select the Claude Code configuration directory. |
+| `CODEX_HOME` | Select the Codex configuration directory. |
+| `XDG_STATE_HOME` | Select the Claude hook state directory; the fallback is `$HOME/.local/state`. |
+
+Use the same overrides for both the preview and apply commands.
+
+## Demo
+
+The recording above is scripted: `scripts/demo/record.sh` builds a throwaway tmux session against a
+scratch database, drives it, and renders `docs/demo.gif`. It requires `asciinema` and `agg`.
+
+## Develop
+
+```sh
+mise run build
+mise run check
+mise run test
+mise run test:e2e
+mise run test:terminal
+```
